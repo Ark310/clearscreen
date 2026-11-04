@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 560" width="980" height="560" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3b4a5e"/>
+    </marker>
+    <style>
+      .box{fill:#ffffff;stroke:#22324a;stroke-width:1.5;rx:8}
+      .ext{fill:#f3f5f8;stroke:#7a8696;stroke-width:1.2;stroke-dasharray:5 4}
+      .t{font-size:15px;font-weight:600;fill:#1f2933}
+      .s{font-size:12px;fill:#5f6b7a}
+      .l{stroke:#3b4a5e;stroke-width:1.6;fill:none;marker-end:url(#a)}
+      .lab{font-size:11.5px;fill:#3b4a5e}
+    </style>
+  </defs>
+  <rect width="980" height="560" fill="#ffffff"/>
+
+  <!-- callers -->
+  <rect class="ext" x="20" y="200" width="170" height="120" rx="8"/>
+  <text class="t" x="105" y="235" text-anchor="middle">Client systems</text>
+  <text class="s" x="105" y="257" text-anchor="middle">compliance apps that</text>
+  <text class="s" x="105" y="273" text-anchor="middle">send alerts and</text>
+  <text class="s" x="105" y="289" text-anchor="middle">whitelist records</text>
+  <text class="s" x="105" y="305" text-anchor="middle">(X-API-Key per client)</text>
+
+  <!-- server boundary -->
+  <rect x="250" y="30" width="520" height="500" rx="12" fill="#f7f9fc" stroke="#22324a" stroke-width="2"/>
+  <text x="270" y="58" font-size="16" font-weight="700" fill="#22324a">ClearScreen server (Windows Server on AWS EC2)</text>
+
+  <rect class="box" x="280" y="200" width="160" height="120"/>
+  <text class="t" x="360" y="232" text-anchor="middle">HTTPS front door</text>
+  <text class="s" x="360" y="254" text-anchor="middle">Caddy · ports 443 / 80</text>
+  <text class="s" x="360" y="270" text-anchor="middle">automatic certificate</text>
+  <text class="s" x="360" y="286" text-anchor="middle">security headers</text>
+  <text class="s" x="360" y="302" text-anchor="middle">ClearScreenHttps</text>
+
+  <rect class="box" x="490" y="185" width="250" height="150"/>
+  <text class="t" x="615" y="215" text-anchor="middle">ClearScreen API</text>
+  <text class="s" x="615" y="237" text-anchor="middle">127.0.0.1:8000 (not reachable from outside)</text>
+  <text class="s" x="615" y="257" text-anchor="middle">API keys · client isolation · rate limits</text>
+  <text class="s" x="615" y="275" text-anchor="middle">exact repeat · match score</text>
+  <text class="s" x="615" y="293" text-anchor="middle">similar-case search · AI review checks</text>
+  <text class="s" x="615" y="317" text-anchor="middle">ClearScreenApi</text>
+
+  <rect class="box" x="490" y="380" width="250" height="110"/>
+  <text class="t" x="615" y="410" text-anchor="middle">SQL Server</text>
+  <text class="s" x="615" y="432" text-anchor="middle">database ClearScreen</text>
+  <text class="s" x="615" y="450" text-anchor="middle">WL_Records + embedding cache</text>
+  <text class="s" x="615" y="468" text-anchor="middle">service login: read / write only</text>
+
+  <rect class="box" x="490" y="80" width="250" height="80"/>
+  <text class="t" x="615" y="108" text-anchor="middle">Embedding service</text>
+  <text class="s" x="615" y="128" text-anchor="middle">bge-m3 on CPU · 127.0.0.1:11434</text>
+  <text class="s" x="615" y="146" text-anchor="middle">ClearScreenEmbed</text>
+
+  <rect class="box" x="280" y="380" width="160" height="110"/>
+  <text class="t" x="360" y="410" text-anchor="middle">ClearScreen Admin</text>
+  <text class="s" x="360" y="432" text-anchor="middle">desktop app, on the</text>
+  <text class="s" x="360" y="448" text-anchor="middle">server only (RDP)</text>
+  <text class="s" x="360" y="468" text-anchor="middle">clients · keys · settings</text>
+
+  <rect class="box" x="280" y="80" width="160" height="80"/>
+  <text class="t" x="360" y="108" text-anchor="middle">Encrypted config</text>
+  <text class="s" x="360" y="128" text-anchor="middle">Groq key · SQL connection</text>
+  <text class="s" x="360" y="146" text-anchor="middle">client key fingerprints</text>
+
+  <!-- groq -->
+  <rect class="ext" x="800" y="200" width="160" height="120" rx="8"/>
+  <text class="t" x="880" y="235" text-anchor="middle">Groq Cloud</text>
+  <text class="s" x="880" y="257" text-anchor="middle">qwen3.8-27b</text>
+  <text class="s" x="880" y="273" text-anchor="middle">AI review: does the</text>
+  <text class="s" x="880" y="289" text-anchor="middle">old reason still hold?</text>
+
+  <!-- arrows -->
+  <path class="l" d="M190,260 L278,260"/>
+  <text class="lab" x="198" y="250">HTTPS</text>
+  <path class="l" d="M440,260 L488,260"/>
+  <path class="l" d="M615,185 L615,162"/>
+  <path class="l" d="M615,335 L615,378"/>
+  <path class="l" d="M740,260 L798,260"/>
+  <text class="lab" x="748" y="250">HTTPS</text>
+  <path class="l" d="M440,435 L488,435"/>
+  <path class="l" d="M280,420 L262,420 L262,120 L278,120"/>
+  <path class="l" d="M490,215 L440,150"/>
+  <text class="lab" x="452" y="196">reads</text>
+</svg>

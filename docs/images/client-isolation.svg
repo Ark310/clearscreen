@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 300" width="980" height="300" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3b4a5e"/></marker>
+    <marker id="x" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b3261e"/></marker>
+    <style>
+      .t{font-size:14.5px;font-weight:600;fill:#1f2933} .s{font-size:12px;fill:#5f6b7a}
+      .l{stroke:#3b4a5e;stroke-width:1.6;fill:none;marker-end:url(#a)}
+      .bad{stroke:#b3261e;stroke-width:1.6;fill:none;stroke-dasharray:6 4;marker-end:url(#x)}
+    </style>
+  </defs>
+  <rect width="980" height="300" fill="#fff"/>
+  <rect x="20" y="40" width="210" height="80" rx="8" fill="#fff" stroke="#22324a" stroke-width="1.5"/>
+  <text class="t" x="125" y="72" text-anchor="middle">Acme Bank's system</text>
+  <text class="s" x="125" y="94" text-anchor="middle">X-API-Key: Acme's key</text>
+  <rect x="20" y="180" width="210" height="80" rx="8" fill="#fff" stroke="#22324a" stroke-width="1.5"/>
+  <text class="t" x="125" y="212" text-anchor="middle">Northwind's system</text>
+  <text class="s" x="125" y="234" text-anchor="middle">X-API-Key: Northwind's key</text>
+
+  <rect x="330" y="20" width="300" height="260" rx="12" fill="#f7f9fc" stroke="#22324a" stroke-width="2"/>
+  <text class="t" x="480" y="50" text-anchor="middle">ClearScreen</text>
+  <text class="s" x="480" y="78" text-anchor="middle">1. The key identifies the client</text>
+  <text class="s" x="480" y="98" text-anchor="middle">2. Every ClientID in the request must</text>
+  <text class="s" x="480" y="114" text-anchor="middle">be that client - else 403 CLIENT_MISMATCH</text>
+  <text class="s" x="480" y="134" text-anchor="middle">3. Only that client's records are read,</text>
+  <text class="s" x="480" y="150" text-anchor="middle">searched, or sent to the AI</text>
+
+  <rect x="730" y="40" width="230" height="80" rx="8" fill="#e8eef7" stroke="#22324a" stroke-width="1.5"/>
+  <text class="t" x="845" y="72" text-anchor="middle">Acme's whitelist</text>
+  <text class="s" x="845" y="94" text-anchor="middle">ClientID = ACME</text>
+  <rect x="730" y="180" width="230" height="80" rx="8" fill="#e8eef7" stroke="#22324a" stroke-width="1.5"/>
+  <text class="t" x="845" y="212" text-anchor="middle">Northwind's whitelist</text>
+  <text class="s" x="845" y="234" text-anchor="middle">ClientID = NORTHWIND</text>
+
+  <path class="l" d="M230,80 L328,80"/>
+  <path class="l" d="M230,220 L328,220"/>
+  <path class="l" d="M630,80 L728,80"/>
+  <path class="l" d="M630,220 L728,220"/>
+  <path class="bad" d="M630,110 L728,200"/>
+  <text x="660" y="168" font-size="12" font-weight="600" fill="#b3261e">never</text>
+</svg>

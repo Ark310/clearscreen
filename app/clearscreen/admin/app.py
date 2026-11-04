@@ -1,0 +1,583 @@
+# -*- coding: utf-8 -*-
+"""ClearScreen Admin - the server's management app (Windows desktop, runs only on the server,
+as an administrator).
+
+  Dashboard  service status, start / stop / restart, health check
+  Clients    add a client (name + Client ID), reset its API key, enable / disable, rename, remove
+  Settings   Groq API key, SQL Server connection string, HTTPS domain, limits
+  Data       load whitelist records from Excel, back up and restore the database
+  Logs       read the service logs
+
+Start it from the "ClearScreen Admin" shortcut, or: pythonw -m clearscreen.admin
+"""
+import ctypes
+import os
+import subprocess
+import sys
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, simpledialog, ttk
+
+from clearscreen import PRODUCT, __version__, db
+from clearscreen.admin import ops, services
+from clearscreen.config import SecureStore, Settings, logs_dir
+from clearscreen.security import add_client, remove_client, rename_client, reset_key, set_enabled
+
+ACCENT, OK, BAD, WARN, MUTED = "#22324a", "#1e7b4a", "#b3261e", "#9a6700", "#5f6b7a"
+
+
+def ensure_admin() -> None:
+    """Relaunch elevated when not started as an administrator."""
+    if ctypes.windll.shell32.IsUserAnAdmin():
+        return
+    params = " ".join(f'"{a}"' for a in ["-m", "clearscreen.admin", *sys.argv[1:]])
+    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+    sys.exit(0)
+
+
+class AdminApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title(f"{PRODUCT} Admin")
+        self.geometry("1040x700")
+        self.minsize(900, 600)
+        self.store = SecureStore()
+        self.settings = Settings.load()
+        style = ttk.Style(self)
+        if "vista" in style.theme_names():
+            style.theme_use("vista")
+        style.configure("Title.TLabel", font=("Segoe UI Semibold", 16), foreground="white", background=ACCENT)
+        style.configure("Sub.TLabel", font=("Segoe UI", 9), foreground="#c9d3e0", background=ACCENT)
+        style.configure("H.TLabel", font=("Segoe UI Semibold", 11))
+        style.configure("Muted.TLabel", foreground=MUTED)
+        style.configure("Treeview", rowheight=24)
+
+        banner = tk.Frame(self, bg=ACCENT, height=58)
+        banner.pack(fill="x")
+        ttk.Label(banner, text=f"{PRODUCT} Admin", style="Title.TLabel").pack(side="left", padx=16, pady=10)
+        ttk.Label(banner, text=f"version {__version__}  ·  this server only  ·  {self.settings.domain}",
+                  style="Sub.TLabel").pack(side="left", pady=(16, 0))
+
+        self.status = tk.StringVar(value="Ready.")
+        ttk.Label(self, textvariable=self.status, style="Muted.TLabel", anchor="w").pack(side="bottom", fill="x",
+                                                                                          padx=10, pady=4)
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=10, pady=(8, 0))
+        for name, builder in (("Dashboard", self._dashboard), ("Clients", self._clients), ("Settings", self._settings),
+                              ("Data", self._data), ("Logs", self._logs)):
+            frame = ttk.Frame(nb, padding=12)
+            nb.add(frame, text=f"  {name}  ")
+            builder(frame)
+        self.after(200, self.refresh_services)
+        self.after(400, self.refresh_clients)
+
+    # ------------------------------------------------------------ helpers --
+    def busy(self, message, work, done=None):
+        """Run work() in the background; done(result) back on the window thread."""
+        self.status.set(message)
+        self.config(cursor="watch")
+
+        def run():
+            try:
+                result, error = work(), None
+            except Exception as e:                                # noqa: BLE001
+                result, error = None, e
+            self.after(0, finish, result, error)
+
+        def finish(result, error):
+            self.config(cursor="")
+            if error is not None:
+                self.status.set("Failed.")
+                messagebox.showerror(PRODUCT, f"{message.rstrip('.')} failed:\n\n{error}")
+            else:
+                self.status.set("Done.")
+                if done:
+                    done(result)
+        threading.Thread(target=run, daemon=True).start()
+
+    def show_key(self, title, client_id, key):
+        """Show a new API key once, with a copy button."""
+        win = tk.Toplevel(self)
+        win.title(title)
+        win.transient(self)
+        win.grab_set()
+        f = ttk.Frame(win, padding=16)
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, text=f"API key for client {client_id}", style="H.TLabel").pack(anchor="w")
+        ttk.Label(f, text="Copy it now and give it to the client securely. It is shown only once:\n"
+                          "ClearScreen stores only a fingerprint of it and cannot show it again.",
+                  foreground=WARN).pack(anchor="w", pady=(4, 10))
+        entry = ttk.Entry(f, width=64, font=("Consolas", 11))
+        entry.insert(0, key)
+        entry.configure(state="readonly")
+        entry.pack(fill="x")
+
+        def copy():
+            self.clipboard_clear()
+            self.clipboard_append(key)
+            copied.set("Copied to the clipboard.")
+        copied = tk.StringVar()
+        row = ttk.Frame(f)
+        row.pack(fill="x", pady=(10, 0))
+        ttk.Button(row, text="Copy key", command=copy).pack(side="left")
+        ttk.Label(row, textvariable=copied, foreground=OK).pack(side="left", padx=8)
+        ttk.Button(row, text="Close", command=win.destroy).pack(side="right")
+        win.wait_window()
+
+    # ---------------------------------------------------------- dashboard --
+    def _dashboard(self, f):
+        ttk.Label(f, text="Services", style="H.TLabel").grid(row=0, column=0, sticky="w")
+        self.svc_vars = {}
+        for i, (name, what) in enumerate(services.SERVICES, start=1):
+            var = tk.StringVar(value="...")
+            self.svc_vars[name] = var
+            ttk.Label(f, text=name, width=20).grid(row=i, column=0, sticky="w", pady=3)
+            ttk.Label(f, textvariable=var, width=14).grid(row=i, column=1, sticky="w")
+            ttk.Label(f, text=what, style="Muted.TLabel").grid(row=i, column=2, sticky="w", padx=(0, 10))
+            for j, (label, fn) in enumerate((("Start", services.start), ("Stop", services.stop),
+                                             ("Restart", services.restart))):
+                ttk.Button(f, text=label, width=9, command=lambda n=name, fn=fn, label=label: self.busy(
+                    f"{label} {n}...", lambda: fn(n), lambda _r: self.refresh_services())).grid(row=i, column=3 + j, padx=2)
+        row = len(services.SERVICES) + 1
+        bar = ttk.Frame(f)
+        bar.grid(row=row, column=0, columnspan=6, sticky="w", pady=(10, 4))
+        ttk.Button(bar, text="Start all", command=lambda: self.busy("Starting all services...", services.start_all,
+                                                                    lambda _r: self.refresh_services())).pack(side="left")
+        ttk.Button(bar, text="Stop all", command=self.stop_all).pack(side="left", padx=6)
+        ttk.Button(bar, text="Restart all", command=lambda: self.busy("Restarting all services...", services.restart_all,
+                                                                      lambda _r: self.refresh_services())).pack(side="left")
+        ttk.Button(bar, text="Refresh", command=self.refresh_services).pack(side="left", padx=6)
+
+        ttk.Separator(f).grid(row=row + 1, column=0, columnspan=6, sticky="ew", pady=12)
+        ttk.Label(f, text="Health check", style="H.TLabel").grid(row=row + 2, column=0, sticky="w")
+        ttk.Button(f, text="Run health check", command=self.run_health).grid(row=row + 2, column=1, sticky="w")
+        self.health_text = tk.Text(f, height=14, width=110, font=("Consolas", 10), relief="flat", background="#f4f6f9")
+        self.health_text.grid(row=row + 3, column=0, columnspan=6, sticky="nsew", pady=(6, 0))
+        f.rowconfigure(row + 3, weight=1)
+        f.columnconfigure(2, weight=1)
+
+    def refresh_services(self):
+        def work():
+            return {n: services.status(n) for n in services.NAMES}
+
+        def done(st):
+            for n, s in st.items():
+                self.svc_vars[n].set({"RUNNING": "● Running", "STOPPED": "○ Stopped",
+                                      "NOT_INSTALLED": "Not installed"}.get(s, s.title()))
+        self.busy("Reading service status...", work, done)
+
+    def stop_all(self):
+        if messagebox.askyesno(PRODUCT, "Stop all ClearScreen services?\n\nCallers will get no answers until "
+                                        "the services are started again."):
+            self.busy("Stopping all services...", services.stop_all, lambda _r: self.refresh_services())
+
+    def run_health(self):
+        def work():
+            lines = []
+            for n in services.NAMES:
+                lines.append(f"{n:20} {services.status(n)}")
+            try:
+                h = ops.health(Settings.load())
+                lines.append(f"\nAPI /health: {h['status'].upper()}  (version {h['version']})")
+                for k, v in h["components"].items():
+                    lines.append(f"  {k:20} {v}")
+            except Exception as e:                                # noqa: BLE001
+                lines.append(f"\nAPI /health: NOT REACHABLE ({type(e).__name__})")
+            cs = self.store.get("sql_connection_string")
+            lines.append("\nSQL Server: " + (ops.test_connection(cs)[1] if cs else "no connection string set"))
+            if cs:
+                try:
+                    con = db.connect(cs)
+                    counts = db.count_by_client(con)
+                    con.close()
+                    lines.append("Whitelist records per client: " +
+                                 (", ".join(f"{c}: {n:,}" for c, n in sorted(counts.items())) or "none yet"))
+                except Exception as e:                            # noqa: BLE001
+                    lines.append(f"Whitelist records: could not read ({type(e).__name__})")
+            key = self.store.get("groq_api_key")
+            lines.append("Groq: " + (ops.test_groq_key(key, Settings.load().groq_model)[1] if key else "no API key set"))
+            return "\n".join(lines)
+
+        def done(text):
+            self.health_text.delete("1.0", "end")
+            self.health_text.insert("1.0", text)
+        self.busy("Running health check...", work, done)
+
+    # ------------------------------------------------------------ clients --
+    def _clients(self, f):
+        ttk.Label(f, text="Clients and their API keys", style="H.TLabel").pack(anchor="w")
+        ttk.Label(f, text="Each client gets one API key. A key works only for its own client's whitelist records.",
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
+        cols = ("id", "name", "status", "key", "rotated", "records")
+        self.tree = ttk.Treeview(f, columns=cols, show="headings", height=14, selectmode="browse")
+        for c, label, w in (("id", "Client ID", 140), ("name", "Name", 230), ("status", "Status", 80),
+                            ("key", "API key (hint)", 170), ("rotated", "Key last set (UTC)", 160),
+                            ("records", "Whitelist records", 120)):
+            self.tree.heading(c, text=label)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True)
+        bar = ttk.Frame(f)
+        bar.pack(fill="x", pady=(8, 0))
+        for label, cmd in (("Add client...", self.add_client), ("Reset API key...", self.reset_key),
+                           ("Enable / disable", self.toggle_client), ("Rename...", self.rename_client),
+                           ("Remove client...", self.remove_client), ("Refresh", self.refresh_clients)):
+            ttk.Button(bar, text=label, command=cmd).pack(side="left", padx=(0, 6))
+
+    def _selected(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo(PRODUCT, "Select a client first.")
+            return None
+        return sel[0]
+
+    def refresh_clients(self):
+        def work():
+            counts = {}
+            cs = self.store.get("sql_connection_string")
+            if cs:
+                try:
+                    con = db.connect(cs)
+                    counts = {k.lower(): v for k, v in db.count_by_client(con).items()}
+                    con.close()
+                except Exception:                                 # noqa: BLE001
+                    counts = None
+            return self.store.clients(), counts
+
+        def done(result):
+            clients, counts = result
+            self.tree.delete(*self.tree.get_children())
+            for cid, c in sorted(clients.items()):
+                n = "?" if counts is None else f"{counts.get(cid.lower(), 0):,}"
+                self.tree.insert("", "end", iid=cid, values=(cid, c.get("name"), "Enabled" if c.get("enabled", True)
+                                                             else "Disabled", c.get("key_hint"), c.get("rotated_utc"), n))
+        self.busy("Loading clients...", work, done)
+
+    def add_client(self):
+        win = tk.Toplevel(self)
+        win.title("Add client")
+        win.transient(self)
+        win.grab_set()
+        f = ttk.Frame(win, padding=16)
+        f.pack()
+        ttk.Label(f, text="Client name").grid(row=0, column=0, sticky="w")
+        name = ttk.Entry(f, width=40)
+        name.grid(row=0, column=1, pady=4)
+        ttk.Label(f, text="Client ID").grid(row=1, column=0, sticky="w")
+        cid = ttk.Entry(f, width=40)
+        cid.grid(row=1, column=1, pady=4)
+        ttk.Label(f, text="Client ID: letters, digits, '.', '_' or '-' (up to 100). It must match the ClientID\n"
+                          "the client sends in its requests and in its whitelist records.",
+                  style="Muted.TLabel").grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 10))
+
+        def save():
+            try:
+                key = add_client(self.store, cid.get(), name.get())
+            except ValueError as e:
+                messagebox.showerror(PRODUCT, str(e), parent=win)
+                return
+            win.destroy()
+            self.refresh_clients()
+            self.show_key("New client", cid.get().strip(), key)
+        ttk.Button(f, text="Add client and create API key", command=save).grid(row=3, column=1, sticky="e")
+        name.focus_set()
+
+    def reset_key(self):
+        cid = self._selected()
+        if cid and messagebox.askyesno(PRODUCT, f"Create a new API key for {cid}?\n\nThe current key stops working "
+                                                "immediately. The client must switch to the new key."):
+            key = reset_key(self.store, cid)
+            self.refresh_clients()
+            self.show_key("New API key", cid, key)
+
+    def toggle_client(self):
+        cid = self._selected()
+        if not cid:
+            return
+        enabled = self.store.clients()[cid].get("enabled", True)
+        verb = "Disable" if enabled else "Enable"
+        if messagebox.askyesno(PRODUCT, f"{verb} client {cid}?" + ("\n\nIts API key will be refused until enabled "
+                                                                   "again. Its whitelist records are kept." if enabled else "")):
+            set_enabled(self.store, cid, not enabled)
+            self.refresh_clients()
+
+    def rename_client(self):
+        cid = self._selected()
+        if cid:
+            new = simpledialog.askstring(PRODUCT, f"New name for {cid}:", initialvalue=self.store.clients()[cid]["name"],
+                                         parent=self)
+            if new:
+                try:
+                    rename_client(self.store, cid, new)
+                except ValueError as e:
+                    messagebox.showerror(PRODUCT, str(e))
+                self.refresh_clients()
+
+    def remove_client(self):
+        cid = self._selected()
+        if not cid:
+            return
+        typed = simpledialog.askstring(PRODUCT, f"Remove client {cid} and its API key?\n\nTo also delete all of its "
+                                                "whitelist records, type DELETE RECORDS. To keep the records, type "
+                                                "REMOVE. Anything else cancels.", parent=self)
+        if typed not in ("REMOVE", "DELETE RECORDS"):
+            return
+
+        def work():
+            deleted = 0
+            if typed == "DELETE RECORDS":
+                con = db.connect(self.store.get("sql_connection_string"))
+                deleted = db.delete_client_records(con, cid)
+                con.commit()
+                con.close()
+            remove_client(self.store, cid)
+            return deleted
+        self.busy(f"Removing {cid}...", work, lambda n: (self.refresh_clients(), messagebox.showinfo(
+            PRODUCT, f"Client {cid} removed." + (f" {n:,} whitelist records deleted." if typed == "DELETE RECORDS" else ""))))
+
+    # ----------------------------------------------------------- settings --
+    def _settings(self, f):
+        s = self.settings
+        ttk.Label(f, text="Groq API key", style="H.TLabel").grid(row=0, column=0, sticky="w")
+        self.groq_state = tk.StringVar()
+        ttk.Label(f, textvariable=self.groq_state).grid(row=0, column=1, sticky="w")
+        ttk.Button(f, text="Set / replace key...", command=self.set_groq_key).grid(row=0, column=2, padx=4)
+        ttk.Button(f, text="Test key", command=self.test_groq).grid(row=0, column=3)
+
+        ttk.Separator(f).grid(row=1, column=0, columnspan=4, sticky="ew", pady=10)
+        ttk.Label(f, text="SQL Server connection", style="H.TLabel").grid(row=2, column=0, sticky="w")
+        self.sql_state = tk.StringVar()
+        ttk.Label(f, textvariable=self.sql_state, wraplength=560).grid(row=2, column=1, sticky="w")
+        ttk.Button(f, text="Edit...", command=self.edit_sql).grid(row=2, column=2, padx=4)
+        ttk.Button(f, text="Test connection", command=self.test_sql).grid(row=2, column=3)
+
+        ttk.Separator(f).grid(row=3, column=0, columnspan=4, sticky="ew", pady=10)
+        ttk.Label(f, text="HTTPS and limits", style="H.TLabel").grid(row=4, column=0, sticky="w")
+        self.vars = {}
+        for i, (key, label) in enumerate((("domain", "Domain name"), ("acme_email", "Certificate contact email"),
+                                          ("rate_limit_per_minute", "Requests per client per minute"),
+                                          ("max_request_mb", "Largest request (MB)"),
+                                          ("ai_max_cases", "AI reviews per alert (records)")), start=5):
+            ttk.Label(f, text=label).grid(row=i, column=0, sticky="w", pady=2)
+            var = tk.StringVar(value=str(getattr(s, key)))
+            self.vars[key] = var
+            ttk.Entry(f, textvariable=var, width=42).grid(row=i, column=1, sticky="w")
+        self.docs_var = tk.BooleanVar(value=s.enable_docs)
+        ttk.Checkbutton(f, text="Publish the API documentation page (/docs)", variable=self.docs_var).grid(
+            row=10, column=1, sticky="w", pady=4)
+        ttk.Button(f, text="Save and restart services", command=self.save_settings).grid(row=11, column=1, sticky="w",
+                                                                                         pady=8)
+        f.columnconfigure(1, weight=1)
+        self.refresh_secret_state()
+
+    def refresh_secret_state(self):
+        self.groq_state.set("Configured" if self.store.get("groq_api_key") else "NOT SET - matching will not work")
+        self.sql_state.set(ops.mask_connection_string(self.store.get("sql_connection_string")))
+
+    def set_groq_key(self):
+        key = simpledialog.askstring(PRODUCT, "Paste the Groq API key (starts with gsk_):", show="•", parent=self)
+        if not key:
+            return
+        key = key.strip()
+
+        def work():
+            return ops.test_groq_key(key, Settings.load().groq_model)
+
+        def done(result):
+            ok, msg = result
+            if not ok and not messagebox.askyesno(PRODUCT, f"{msg}\n\nSave this key anyway?"):
+                return
+            self.store.update(lambda d: d.update(groq_api_key=key))
+            self.refresh_secret_state()
+            messagebox.showinfo(PRODUCT, f"Groq key saved. {msg}\nThe API uses it from the next request - no restart needed.")
+        self.busy("Checking the Groq key...", work, done)
+
+    def test_groq(self):
+        key = self.store.get("groq_api_key")
+        if not key:
+            messagebox.showwarning(PRODUCT, "No Groq API key is set.")
+            return
+        self.busy("Testing the Groq key...", lambda: ops.test_groq_key(key, Settings.load().groq_model),
+                  lambda r: (messagebox.showinfo if r[0] else messagebox.showerror)(PRODUCT, r[1]))
+
+    def edit_sql(self):
+        win = tk.Toplevel(self)
+        win.title("SQL Server connection string")
+        win.transient(self)
+        win.grab_set()
+        f = ttk.Frame(win, padding=16)
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, text="ODBC connection string used by the API service:").pack(anchor="w")
+        text = tk.Text(f, width=90, height=5, font=("Consolas", 10))
+        text.insert("1.0", self.store.get("sql_connection_string") or
+                    "Driver={ODBC Driver 18 for SQL Server};Server=localhost;Database=ClearScreen;"
+                    "Trusted_Connection=yes;Encrypt=yes;TrustServerCertificate=yes")
+        text.pack(fill="both", expand=True, pady=6)
+        ttk.Label(f, text="With Trusted_Connection=yes the API service signs in as NT SERVICE\\ClearScreenApi "
+                          "(setup gives it access). For a SQL login use UID=...;PWD=... instead.",
+                  style="Muted.TLabel", wraplength=640).pack(anchor="w")
+        result = tk.StringVar()
+        ttk.Label(f, textvariable=result, wraplength=640).pack(anchor="w", pady=6)
+        row = ttk.Frame(f)
+        row.pack(fill="x")
+
+        def value():
+            return " ".join(text.get("1.0", "end").split())
+
+        def test():
+            self.busy("Testing the connection...", lambda: ops.test_connection(value()),
+                      lambda r: result.set(("OK: " if r[0] else "FAILED: ") + r[1]))
+
+        def save():
+            cs = value()
+            ok, msg = ops.test_connection(cs)
+            if not ok and not messagebox.askyesno(PRODUCT, f"{msg}\n\nSave anyway?", parent=win):
+                return
+            if ok and "not created" in msg and messagebox.askyesno(PRODUCT, "Create the ClearScreen tables in this "
+                                                                            "database now?", parent=win):
+                ops.ensure_schema(cs)
+            self.store.update(lambda d: d.update(sql_connection_string=cs))
+            win.destroy()
+            self.refresh_secret_state()
+            if messagebox.askyesno(PRODUCT, "Saved. Restart the API service now to use it?"):
+                self.busy("Restarting the API...", lambda: services.restart("ClearScreenApi"),
+                          lambda _r: self.refresh_services())
+        ttk.Button(row, text="Test connection", command=test).pack(side="left")
+        ttk.Button(row, text="Save", command=save).pack(side="right")
+
+    def test_sql(self):
+        cs = self.store.get("sql_connection_string")
+        if not cs:
+            messagebox.showwarning(PRODUCT, "No connection string is set.")
+            return
+        self.busy("Testing the SQL Server connection...", lambda: ops.test_connection(cs),
+                  lambda r: (messagebox.showinfo if r[0] else messagebox.showerror)(PRODUCT, r[1]))
+
+    def save_settings(self):
+        s = Settings.load()
+        try:
+            s.domain = self.vars["domain"].get().strip()
+            s.acme_email = self.vars["acme_email"].get().strip()
+            s.rate_limit_per_minute = max(1, int(self.vars["rate_limit_per_minute"].get()))
+            s.max_request_mb = max(1, int(self.vars["max_request_mb"].get()))
+            s.ai_max_cases = min(10, max(1, int(self.vars["ai_max_cases"].get())))
+        except ValueError:
+            messagebox.showerror(PRODUCT, "The limits must be whole numbers.")
+            return
+        s.enable_docs = self.docs_var.get()
+        s.save()
+        ops.write_caddyfile(s)
+        self.settings = s
+        self.busy("Restarting services...", services.restart_all, lambda _r: (self.refresh_services(), messagebox.showinfo(
+            PRODUCT, "Settings saved and services restarted.")))
+
+    # --------------------------------------------------------------- data --
+    def _data(self, f):
+        ttk.Label(f, text="Load whitelist records from Excel", style="H.TLabel").pack(anchor="w")
+        ttk.Label(f, text="Columns: ClientID, Unique_ID, Screened_Fields, Screened_Values, Database_Screened, "
+                          "Screened_Date, Matched_Details, Analyst_Allow_Reasoning. Every sheet with a ClientID column "
+                          "is read; only rows of registered clients are loaded. A ClientID + Unique_ID that exists "
+                          "is replaced.", style="Muted.TLabel", wraplength=900).pack(anchor="w")
+        row = ttk.Frame(f)
+        row.pack(fill="x", pady=8)
+        ttk.Button(row, text="Choose Excel file and load...", command=self.load_excel).pack(side="left")
+        self.progress = ttk.Progressbar(row, length=360, mode="determinate")
+        self.progress.pack(side="left", padx=10)
+        self.load_result = tk.Text(f, height=9, font=("Consolas", 10), relief="flat", background="#f4f6f9")
+        self.load_result.pack(fill="x")
+
+        ttk.Separator(f).pack(fill="x", pady=12)
+        ttk.Label(f, text="Database backup and restore", style="H.TLabel").pack(anchor="w")
+        ttk.Label(f, text="Backups go to SQL Server's default backup folder. Client keys and settings are not in the "
+                          "database: they stay on this server.", style="Muted.TLabel").pack(anchor="w")
+        row = ttk.Frame(f)
+        row.pack(fill="x", pady=8)
+        ttk.Button(row, text="Back up now", command=self.backup).pack(side="left")
+        ttk.Button(row, text="Restore from a backup...", command=self.restore).pack(side="left", padx=6)
+        ttk.Button(row, text="Open backup folder", command=self.open_backups).pack(side="left")
+
+    def load_excel(self):
+        cs = self.store.get("sql_connection_string")
+        clients = self.store.clients()
+        if not cs or not clients:
+            messagebox.showwarning(PRODUCT, "Set the SQL Server connection and add at least one client first.")
+            return
+        path = filedialog.askopenfilename(title="Whitelist workbook", filetypes=[("Excel workbook", "*.xlsx")])
+        if not path:
+            return
+
+        def progress(done, total):
+            self.after(0, lambda: self.progress.configure(maximum=max(total, 1), value=done))
+
+        def done(r):
+            lines = [f"Rows read: {r['read']:,}", f"Added: {r['added']:,}", f"Replaced: {r['replaced']:,}",
+                     f"Skipped (missing required fields): {r['skipped_incomplete']:,}"]
+            if r["skipped_unknown_client"]:
+                lines.append("Skipped (ClientID not registered): " +
+                             ", ".join(f"{c} x{n:,}" for c, n in r["skipped_unknown_client"].items()))
+            lines.append("\nNew records are searchable for similar cases once the API service has embedded them "
+                         "(it works through them in the background; see Dashboard > Health check).")
+            self.load_result.delete("1.0", "end")
+            self.load_result.insert("1.0", "\n".join(lines))
+            self.refresh_clients()
+        self.busy("Loading the workbook...", lambda: ops.load_excel(cs, path, clients, progress), done)
+
+    def backup(self):
+        cs = self.store.get("sql_connection_string")
+        self.busy("Backing up the database...", lambda: ops.backup(cs),
+                  lambda p: messagebox.showinfo(PRODUCT, f"Backup written:\n{p}"))
+
+    def restore(self):
+        cs = self.store.get("sql_connection_string")
+        backups = ops.list_backups(cs)
+        path = filedialog.askopenfilename(title="Backup to restore", initialdir=os.path.dirname(backups[0]) if backups
+                                          else ops.default_backup_dir(cs), filetypes=[("SQL Server backup", "*.bak")])
+        if not path:
+            return
+        typed = simpledialog.askstring(PRODUCT, f"Restore {os.path.basename(path)}?\n\nThis REPLACES all current "
+                                                "whitelist records with the backup's. The API is stopped during the "
+                                                "restore. Type RESTORE to continue.", parent=self)
+        if typed != "RESTORE":
+            return
+
+        def work():
+            services.stop("ClearScreenApi")
+            try:
+                ops.restore(cs, path)
+            finally:
+                services.start("ClearScreenApi")
+        self.busy("Restoring the database...", work, lambda _r: (self.refresh_clients(), self.refresh_services(),
+                                                                 messagebox.showinfo(PRODUCT, "Database restored.")))
+
+    def open_backups(self):
+        try:
+            os.startfile(ops.default_backup_dir(self.store.get("sql_connection_string")))
+        except Exception as e:                                    # noqa: BLE001
+            messagebox.showerror(PRODUCT, f"Could not open the backup folder: {e}")
+
+    # --------------------------------------------------------------- logs --
+    def _logs(self, f):
+        row = ttk.Frame(f)
+        row.pack(fill="x")
+        ttk.Label(row, text="Log").pack(side="left")
+        self.log_choice = tk.StringVar(value="API")
+        ttk.Combobox(row, textvariable=self.log_choice, values=list(ops.log_files()), state="readonly",
+                     width=34).pack(side="left", padx=6)
+        ttk.Button(row, text="Show", command=self.show_log).pack(side="left")
+        ttk.Button(row, text="Open logs folder", command=lambda: os.startfile(logs_dir())).pack(side="left", padx=6)
+        self.log_text = tk.Text(f, font=("Consolas", 9), wrap="none", relief="flat", background="#f4f6f9")
+        self.log_text.pack(fill="both", expand=True, pady=(8, 0))
+
+    def show_log(self):
+        text = ops.tail(ops.log_files()[self.log_choice.get()])
+        self.log_text.delete("1.0", "end")
+        self.log_text.insert("1.0", text)
+        self.log_text.see("end")
+
+
+def main():
+    ensure_admin()
+    AdminApp().mainloop()
+
+
+if __name__ == "__main__":
+    main()
