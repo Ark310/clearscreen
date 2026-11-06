@@ -36,6 +36,10 @@
 .PARAMETER AcceptSqlServerLicense  Accept Microsoft's SQL Server license terms (https://aka.ms/useterms); needed
                              with -Unattended -InstallSqlServer.
 .PARAMETER NoSqlServerInstall  Never offer to install SQL Server.
+.PARAMETER InstallDrive      Drive for everything that can move (default D: if present): programs, data, SQL Server,
+                             databases, backups and SSMS, all under <drive>\ClearScreen. Asked for if not given.
+                             An existing installation stays where it is.
+.PARAMETER NoSsms            Do not install SQL Server Management Studio.
 #>
 [CmdletBinding()]
 param(
@@ -52,7 +56,9 @@ param(
     [switch]$Unattended,
     [switch]$InstallSqlServer,
     [switch]$AcceptSqlServerLicense,
-    [switch]$NoSqlServerInstall
+    [switch]$NoSqlServerInstall,
+    [string]$InstallDrive,
+    [switch]$NoSsms
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,10 +67,8 @@ $ProgressPreference = "SilentlyContinue"            # Invoke-WebRequest is far f
 
 $Package = Split-Path $PSScriptRoot -Parent
 $Version = (Get-Content (Join-Path $Package "VERSION") -Raw).Trim()
-$Install = Join-Path $env:ProgramFiles "ClearScreen"
-$Data = Join-Path $env:ProgramData "ClearScreen"
-$Downloads = Join-Path $Data "downloads"
-$Logs = Join-Path $Data "logs"
+$Reg = "HKLM:\SOFTWARE\ClearScreen"        # where the installation is (read by the app, the Admin app and uninstall)
+# $Root, $Install, $Data, $Downloads, $Logs are set by Resolve-Locations (below) before anything is written.
 
 # ---------------------------------------------------------- pinned components ---
 $C = @{
@@ -80,6 +84,10 @@ $C = @{
     # and its setup.exe must carry Microsoft's signature. Only used when this server has no SQL Server.
     SqlDev = @{ Version = "2022 Developer"; Url = "https://download.microsoft.com/download/3/8/d/38de7036-2433-4207-8eae-06e247e17b25/SQLServer2022-x64-ENU-Dev.iso"
                 Sha256 = "80d2cd75dd2b28098c0182f50ad86bd44f9b3a9f357c30ff617480a1497daffd" }
+    # SQL Server Management Studio 22: Microsoft's installer (bootstrapper), pinned by SHA-256 + Microsoft signature.
+    # It downloads SSMS itself from Microsoft (the Visual Studio installer verifies those signed packages).
+    Ssms   = @{ Version = "22"; Url = "https://download.visualstudio.microsoft.com/download/pr/5f474104-723f-4007-bf4c-92e42a23dcc6/2c1ae4f6bd3aeb7314282ef5c94abee6aa2d68a2cbfd4b8825438f8542f66a36/vs_SSMS.exe"
+                Sha256 = "2c1ae4f6bd3aeb7314282ef5c94abee6aa2d68a2cbfd4b8825438f8542f66a36"; Signer = "Microsoft Corporation" }
     WinSW  = @{ Version = "2.12.0"; File = (Join-Path $Package "installer\vendor\WinSW-x64.exe")
                 Sha256 = "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da" }
 }
@@ -173,6 +181,67 @@ function Read-PemPath($prompt, $marker) {
     }
 }
 
+function Resolve-Locations {
+    # Everything that can move goes under <drive>\ClearScreen (default D:). An existing installation keeps its place.
+    $prev = Get-ItemProperty $Reg -ErrorAction SilentlyContinue
+    if ($prev -and $prev.InstallDir -and (Test-Path (Join-Path $prev.InstallDir "app\clearscreen\__init__.py"))) {
+        $script:Root = $prev.Root; $script:Install = $prev.InstallDir; $script:Data = $prev.DataDir
+    } elseif (Test-Path (Join-Path $env:ProgramFiles "ClearScreen\app\clearscreen\__init__.py")) {
+        $script:Root = $null                                                  # a 1.0 installation on C: stays there
+        $script:Install = Join-Path $env:ProgramFiles "ClearScreen"; $script:Data = Join-Path $env:ProgramData "ClearScreen"
+    } else {
+        $default = if ($InstallDrive) { $InstallDrive } elseif (Test-Path "D:\") { "D:" } else { $env:SystemDrive }
+        $drive = $default
+        while ($true) {
+            if (-not $Unattended -and -not $InstallDrive) {
+                $answer = Read-Host "    Drive for ClearScreen, SQL Server and SSMS [$drive]"
+                if ($answer) { $drive = $answer }
+            }
+            $drive = $drive.Trim().TrimEnd("\").TrimEnd(":").ToUpper()
+            $vol = if ($drive -match '^[A-Z]$') { Get-Volume -DriveLetter $drive -ErrorAction SilentlyContinue }
+            if ($vol -and $vol.DriveType -eq "Fixed" -and $vol.FileSystem -eq "NTFS") { break }
+            if ($Unattended -or $InstallDrive) { Fail "Drive $drive`: is not a local NTFS drive." }
+            Warn "Drive $drive`: is not a local NTFS drive (e.g. D:). Try again."
+            $drive = $default
+        }
+        $script:Root = "$drive`:\ClearScreen"
+        $script:Install = Join-Path $Root "Program"; $script:Data = Join-Path $Root "Data"
+    }
+    $script:Downloads = Join-Path $Data "downloads"
+    $script:Logs = Join-Path $Data "logs"
+}
+
+function Get-FreeGB($path) { return (Get-PSDrive ((Split-Path $path -Qualifier).TrimEnd(":"))).Free / 1GB }
+
+function Install-Ssms {
+    $exe = if ($Root) { Join-Path $Root "SSMS\Common7\IDE\Ssms.exe" }
+           else { Join-Path $env:ProgramFiles "Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Ssms.exe" }
+    $known = (Get-ItemProperty $Reg -ErrorAction SilentlyContinue).SsmsExe
+    foreach ($candidate in @($known, $exe, (Join-Path $env:ProgramFiles "Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Ssms.exe"))) {
+        if ($candidate -and (Test-Path $candidate)) {
+            Set-ItemProperty $Reg SsmsExe $candidate
+            Good "already installed ($candidate)"; return
+        }
+    }
+    $boot = Get-Verified "SQL Server Management Studio installer" $C.Ssms
+    Info "downloading and installing SSMS 22 from Microsoft - about 10-20 minutes, please wait..."
+    $arguments = @("--quiet", "--norestart", "--wait", "--nocache")
+    if ($Root) {
+        $arguments += @("--installPath", "`"$(Join-Path $Root 'SSMS')`"", "--path", "shared=`"$(Join-Path $Root 'SSMS-Shared')`"",
+                        "--path", "cache=`"$(Join-Path $Downloads 'ssms-cache')`"")
+    }
+    $p = Start-Process -FilePath $boot -ArgumentList $arguments -Wait -PassThru
+    if ($p.ExitCode -notin 0, 3010 -or -not (Test-Path $exe)) {
+        if ($p.ExitCode -in 0, 3010) { Warn "The SSMS installer finished, but $exe was not found. ClearScreen itself is not affected." }
+        else { Warn "SSMS could not be installed (exit code $($p.ExitCode)). ClearScreen itself is not affected." }
+        Warn "Its logs (ssms_*.log) are in $env:TEMP. Run Setup.cmd again later to retry."
+        return
+    }
+    if ($p.ExitCode -eq 3010) { Warn "SSMS asks for a Windows restart - restart the server after setup finishes." }
+    Set-ItemProperty $Reg SsmsExe $exe
+    Good "SQL Server Management Studio installed ($exe). Open it from ClearScreen Admin > Data."
+}
+
 function Test-RebootPending {
     return (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") -or
            (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired")
@@ -190,8 +259,6 @@ function Get-SqlEdition {
 }
 
 function Install-SqlServerDeveloper {
-    $free = (Get-PSDrive ($env:SystemDrive.TrimEnd(":"))).Free / 1GB
-    if ($free -lt 20) { Fail ("Installing SQL Server needs at least 20 GB of free disk space (found {0:N1} GB)." -f $free) }
     if (Test-RebootPending) { Fail "Windows has a restart pending, which blocks SQL Server setup. Restart the server, then run Setup.cmd again." }
     Info "installation media: about 1.1 GB from download.microsoft.com"
     $iso = Get-Verified "SQL Server" $C.SqlDev
@@ -230,8 +297,21 @@ function Install-SqlServerDeveloper {
             "/TCPENABLED=0", "/NPENABLED=0",                                     # reachable from this server only
             "/SQLMAXMEMORY=$maxMemMB", "/SQLMINMEMORY=0",
             "/UPDATEENABLED=True")                                               # include Microsoft's latest updates
+        if ($Root) {
+            # Program files, databases and backups on the ClearScreen drive. Databases and backups: administrators
+            # only (SQL Server setup adds its own service account).
+            Set-Acl-Folder (Join-Path $Root "SQLData") @{}
+            Set-Acl-Folder (Join-Path $Root "Backups") @{}
+            $arguments += @("/INSTANCEDIR=`"$(Join-Path $Root 'SQLServer')`"",
+                            "/INSTALLSHAREDDIR=`"$(Join-Path $Root 'SQLServer\Shared')`"",
+                            "/INSTALLSHAREDWOWDIR=`"$(Join-Path $Root 'SQLServer\Shared (x86)')`"",
+                            "/INSTALLSQLDATADIR=`"$(Join-Path $Root 'SQLData')`"",
+                            "/SQLBACKUPDIR=`"$(Join-Path $Root 'Backups')`"")
+        }
         $p = Start-Process -FilePath $setupExe -ArgumentList $arguments -Wait -PassThru -NoNewWindow
-        $summary = Join-Path $env:ProgramFiles "Microsoft SQL Server\160\Setup Bootstrap\Log\Summary.txt"
+        $summary = @((Join-Path $env:ProgramFiles "Microsoft SQL Server\160\Setup Bootstrap\Log\Summary.txt"),
+                     $(if ($Root) { Join-Path $Root "SQLServer\Shared\160\Setup Bootstrap\Log\Summary.txt" })) |
+                   Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
         if ($p.ExitCode -notin 0, 3010) { Fail "SQL Server setup failed (exit code $($p.ExitCode)). Details: $summary" }
         if ($p.ExitCode -eq 3010) { Warn "SQL Server asks for a Windows restart - restart the server after setup finishes." }
     } finally {
@@ -247,6 +327,7 @@ function Install-SqlServerDeveloper {
     } catch { Warn "Could not turn on Microsoft Update; install SQL Server updates manually." }
     Remove-Item $iso -Force -ErrorAction SilentlyContinue                       # 1.1 GB no longer needed
     Good ("SQL Server installed: {0}; memory capped at {1:N0} MB; network access off (this server only); {2} and Administrators are SQL administrators" -f (Get-SqlEdition), $maxMemMB, $admin)
+    if ($Root) { Info "SQL Server program: $Root\SQLServer   databases: $Root\SQLData   backups: $Root\Backups" }
     Warn "Developer edition: for development, testing and demos only. Upgrade to Standard before real client data (see the Installation Guide)."
 }
 
@@ -283,22 +364,38 @@ $envXml
 }
 
 # ---------------------------------------------------------------------- start ---
-New-Item -ItemType Directory -Force -Path $Data, $Downloads, $Logs | Out-Null
-Start-Transcript -Path (Join-Path $Logs "install.log") -Append | Out-Null
+Write-Host ""
+Write-Host "  ClearScreen $Version setup" -ForegroundColor White
+Write-Host "  ---------------------------" -ForegroundColor DarkGray
 try {
-    Write-Host ""
-    Write-Host "  ClearScreen $Version setup" -ForegroundColor White
-    Write-Host "  ---------------------------" -ForegroundColor DarkGray
-
-    Step 1 "Checking this server"
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
             [Security.Principal.WindowsBuiltInRole]::Administrator)) { Fail "Run setup as an administrator (use Setup.cmd)." }
+    Resolve-Locations
+    if ($Root) {
+        # A new drive's root lets every user create files: ClearScreen's folder gets its own permissions -
+        # administrators and SYSTEM full control, everyone else (incl. the services) read and run only.
+        Set-Acl-Folder $Root @{ "NT AUTHORITY\Authenticated Users" = "ReadAndExecute" }
+    }
+    New-Item -ItemType Directory -Force -Path $Install, $Data, $Downloads, $Logs | Out-Null
+    New-Item -Path $Reg -Force | Out-Null
+    if ($Root) { Set-ItemProperty $Reg Root $Root }
+    Set-ItemProperty $Reg InstallDir $Install
+    Set-ItemProperty $Reg DataDir $Data
+    # Installer temp files (SQL Server, SSMS, Python, pip) on the ClearScreen drive too.
+    $Temp = Join-Path $Data "temp"
+    Set-Acl-Folder $Temp @{}
+    $env:TEMP = $Temp; $env:TMP = $Temp
+} catch {
+    Write-Host "  SETUP STOPPED: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
+Start-Transcript -Path (Join-Path $Logs "install.log") -Append | Out-Null
+try {
+    Step 1 "Checking this server"
     if ([Environment]::OSVersion.Version.Build -lt 14393) { Fail "Windows Server 2016 or newer is required." }
     if (-not [Environment]::Is64BitOperatingSystem) { Fail "A 64-bit Windows is required." }
-    $free = (Get-PSDrive ($env:SystemDrive.TrimEnd(":"))).Free / 1GB
-    if ($free -lt 12) { Fail ("At least 12 GB of free disk space is needed (found {0:N1} GB)." -f $free) }
     $existing = Test-Path (Join-Path $Install "app\clearscreen\__init__.py")
-    Good ("Windows build {0}, {1:N0} GB free{2}" -f [Environment]::OSVersion.Version.Build, $free,
+    Good ("Windows build {0}; installing to {1}{2}" -f [Environment]::OSVersion.Version.Build, $(if ($Root) { $Root } else { $Install }),
           $(if ($existing) { " - existing installation found: upgrading / repairing" } else { "" }))
 
     if (-not $Unattended) {
@@ -349,6 +446,19 @@ try {
     }
     if ($TlsCertFile -and -not $TlsKeyFile) { Fail "-TlsKeyFile is needed with -TlsCertFile." }
 
+    # Disk space: on the ClearScreen drive, and on C: (Windows keeps some SQL Server / SSMS files there regardless).
+    $needRoot = 12 + $(if ($doSqlInstall) { 10 } else { 0 }) + $(if (-not $NoSsms) { 6 } else { 0 })
+    $needSys = 1 + $(if ($doSqlInstall) { 3 } else { 0 }) + $(if (-not $NoSsms) { 2 } else { 0 })
+    $rootDrive = Split-Path $Install -Qualifier
+    if ($rootDrive -eq $env:SystemDrive) { $needRoot += $needSys; $needSys = 0 }
+    $freeRoot = Get-FreeGB $Install
+    if ($freeRoot -lt $needRoot) { Fail ("{0} needs at least {1} GB free for this installation (found {2:N1} GB)." -f $rootDrive, $needRoot, $freeRoot) }
+    if ($needSys -gt 0) {
+        $freeSys = Get-FreeGB $env:SystemDrive
+        if ($freeSys -lt $needSys) { Fail ("{0} needs at least {1} GB free: Windows keeps some SQL Server / SSMS files there (found {2:N1} GB)." -f $env:SystemDrive, $needSys, $freeSys) }
+    }
+    Good ("disk space OK: {0} {1:N0} GB free{2}" -f $rootDrive, $freeRoot, $(if ($needSys -gt 0) { ", {0} {1:N0} GB free" -f $env:SystemDrive, $freeSys } else { "" }))
+
     if ($doSqlInstall) {
         Step 2 "SQL Server $($C.SqlDev.Version)"
         Install-SqlServerDeveloper
@@ -359,13 +469,16 @@ try {
         Step 2 "SQL Server: $(if ($sqlLocal) { 'not installed - skipped' } else { "using $SqlServer" })"
     }
 
-    Step 3 "Stopping running ClearScreen services (if any)"
+    if ($NoSsms) { Step 3 "SQL Server Management Studio: skipped (-NoSsms)" }
+    else { Step 3 "SQL Server Management Studio 22"; Install-Ssms }
+
+    Step 4 "Stopping running ClearScreen services (if any)"
     foreach ($s in $Services[2], $Services[1], $Services[0]) {
         $svc = Get-Service -Name $s.Name -ErrorAction SilentlyContinue
         if ($svc -and $svc.Status -ne "Stopped") { Stop-Service -Name $s.Name -Force; Info "stopped $($s.Name)" }
     }
 
-    Step 4 "Python $($C.Python.Version)"
+    Step 5 "Python $($C.Python.Version)"
     $PyHome = Join-Path $Install "python"
     if (-not (Test-Path (Join-Path $PyHome "python.exe"))) {
         $exe = Get-Verified "Python" $C.Python
@@ -375,7 +488,7 @@ try {
     }
     Good "Python at $PyHome"
 
-    Step 5 "ClearScreen application files and packages"
+    Step 6 "ClearScreen application files and packages"
     New-Item -ItemType Directory -Force -Path $Install, (Join-Path $Install "services") | Out-Null
     $rc = Start-Process robocopy -Wait -PassThru -NoNewWindow -ArgumentList @("`"$(Join-Path $Package 'app')`"",
         "`"$(Join-Path $Install 'app')`"", "/MIR", "/XD", "__pycache__", "tests", ".pytest_cache", "/NFL", "/NDL", "/NJH", "/NJS", "/NP")
@@ -384,12 +497,12 @@ try {
     $Venv = Join-Path $Install "venv"
     if (-not (Test-Path (Join-Path $Venv "Scripts\python.exe"))) { & (Join-Path $PyHome "python.exe") -m venv $Venv }
     $Py = Join-Path $Venv "Scripts\python.exe"
-    & $Py -m pip install --disable-pip-version-check --no-input --quiet --require-hashes --only-binary=:all: `
+    & $Py -m pip install --disable-pip-version-check --no-input --quiet --no-cache-dir --require-hashes --only-binary=:all: `
         -r (Join-Path $Install "app\requirements.lock")
     if ($LASTEXITCODE -ne 0) { Fail "Installing the Python packages failed (see the log above)." }
     Good "application $Version installed, packages verified"
 
-    Step 6 "Microsoft ODBC Driver 18 for SQL Server"
+    Step 7 "Microsoft ODBC Driver 18 for SQL Server"
     if (Get-OdbcDriver -Name "ODBC Driver 18 for SQL Server" -Platform "64-bit" -ErrorAction SilentlyContinue) {
         Good "already installed"
     } else {
@@ -399,7 +512,7 @@ try {
         Good "installed"
     }
 
-    Step 7 "Embedding service (Ollama $($C.Ollama.Version), CPU only)"
+    Step 8 "Embedding service (Ollama $($C.Ollama.Version), CPU only)"
     $OllamaDir = Join-Path $Install "ollama"
     $OllamaStamp = Join-Path $OllamaDir ".version"
     if (-not (Test-Path $OllamaStamp) -or (Get-Content $OllamaStamp -Raw).Trim() -ne $C.Ollama.Version) {
@@ -414,7 +527,7 @@ try {
     Good "ready"
 
     if (-not $SkipHttps) {
-        Step 8 "HTTPS front door (Caddy $($C.Caddy.Version))"
+        Step 9 "HTTPS front door (Caddy $($C.Caddy.Version))"
         $CaddyDir = Join-Path $Install "caddy"
         $CaddyStamp = Join-Path $CaddyDir ".version"
         if (-not (Test-Path $CaddyStamp) -or (Get-Content $CaddyStamp -Raw).Trim() -ne $C.Caddy.Version) {
@@ -424,9 +537,9 @@ try {
             Set-Content $CaddyStamp $C.Caddy.Version
         }
         Good "ready"
-    } else { Step 8 "HTTPS front door: skipped (-SkipHttps)" }
+    } else { Step 9 "HTTPS front door: skipped (-SkipHttps)" }
 
-    Step 9 "Windows services"
+    Step 10 "Windows services"
     if ((Get-FileHash $C.WinSW.File -Algorithm SHA256).Hash -ne $C.WinSW.Sha256.ToUpper()) { Fail "The bundled WinSW does not match its pinned checksum." }
     $embedUrl = "http://127.0.0.1:$EmbedPort"
     Write-ServiceXml "ClearScreenEmbed" "ClearScreen - Embedding service" `
@@ -438,7 +551,7 @@ try {
     Write-ServiceXml "ClearScreenApi" "ClearScreen - API" `
         "The ClearScreen API (127.0.0.1:$ApiPort). Reached from outside only through the HTTPS service." `
         $Py "-m uvicorn clearscreen.api:app --host 127.0.0.1 --port $ApiPort --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-server-header --log-level warning --timeout-keep-alive 30" `
-        (Join-Path $Install "app") @{ CLS_INSTALL_DIR = $Install; PYTHONDONTWRITEBYTECODE = "1" }
+        (Join-Path $Install "app") @{ CLS_INSTALL_DIR = $Install; CLS_DATA_DIR = $Data; PYTHONDONTWRITEBYTECODE = "1" }
     if (-not $SkipHttps) {
         Write-ServiceXml "ClearScreenHttps" "ClearScreen - HTTPS" `
             "HTTPS front door for $Domain (Caddy, automatic Let's Encrypt certificate). Forwards to the local API." `
@@ -459,7 +572,7 @@ try {
         Good "$($s.Name) registered (runs as NT SERVICE\$($s.Name))"
     }
 
-    Step 10 "Folder permissions"
+    Step 11 "Folder permissions"
     Set-Acl-Folder (Join-Path $Data "config") @{ "NT SERVICE\ClearScreenApi" = "ReadAndExecute"; "NT SERVICE\ClearScreenHttps" = "ReadAndExecute" }
     Set-Acl-Folder $Logs @{ "NT SERVICE\ClearScreenApi" = "Modify"; "NT SERVICE\ClearScreenEmbed" = "Modify"; "NT SERVICE\ClearScreenHttps" = "Modify" }
     Set-Acl-Folder (Join-Path $Data "ollama") @{ "NT SERVICE\ClearScreenEmbed" = "Modify" }
@@ -469,7 +582,7 @@ try {
     Set-Acl-Folder $Downloads @{}
     Good "configuration readable only by administrators and the services; secrets encrypted on top (DPAPI)"
 
-    Step 11 "Settings"
+    Step 12 "Settings"
     $email = if ($AcmeEmail) { $AcmeEmail } else { "" }
     $tlsMode = if ($LetsEncrypt) { "automatic" } else { "certificate" }
     $r = Invoke-Py @("-m", "clearscreen.setup_cli", "settings", "--domain", $Domain, "--email", $email,
@@ -487,7 +600,7 @@ try {
         Good "HTTPS configuration valid ($(if ($LetsEncrypt) { 'automatic Let''s Encrypt certificate' } else { 'your certificate, port 443 only' }))"
     }
 
-    Step 12 "SQL Server database ($SqlServer / $Database)"
+    Step 13 "SQL Server database ($SqlServer / $Database)"
     $r = Invoke-Py @("-m", "clearscreen.setup_cli", "sql-init", "--server", $SqlServer, "--database", $Database,
                      "--service-login", "NT SERVICE\ClearScreenApi")
     if ($r.Code -ne 0) {
@@ -495,7 +608,7 @@ try {
         Warn "Fix the SQL Server access, then set the connection in ClearScreen Admin > Settings."
     } else { Good "database ready; the API service signs in as NT SERVICE\ClearScreenApi (read/write only)" }
 
-    Step 13 "Groq API key"
+    Step 14 "Groq API key"
     Push-Location (Join-Path $Install "app")
     try { $haveKey = ((& $Py -m clearscreen.setup_cli status 2>$null) -join "`n" | ConvertFrom-Json).groq_key -eq "set" }
     catch { $haveKey = $false } finally { Pop-Location }
@@ -518,7 +631,7 @@ try {
         }
     }
 
-    Step 14 "Firewall"
+    Step 15 "Firewall"
     if (-not $SkipHttps) {
         Remove-NetFirewallRule -Name "ClearScreen-HTTPS" -ErrorAction SilentlyContinue
         if ($LetsEncrypt) {
@@ -533,7 +646,7 @@ try {
     }
     Info "the API ($ApiPort) and embedding service ($EmbedPort) listen on 127.0.0.1 only - not reachable from outside"
 
-    Step 15 "Starting the services"
+    Step 16 "Starting the services"
     Start-Service ClearScreenEmbed
     if (-not (Wait-Url "$embedUrl/api/version" 90)) { Fail "The embedding service did not start (see $Logs)." }
     Good "embedding service running"
@@ -545,7 +658,7 @@ try {
     Good "API running"
     if (-not $SkipHttps) { Start-Service ClearScreenHttps; Good "HTTPS service running" }
 
-    Step 16 "ClearScreen Admin shortcut and uninstall entry"
+    Step 17 "ClearScreen Admin shortcut and uninstall entry"
     Copy-Item (Join-Path $Package "Uninstall.cmd") $Install -Force
     Copy-Item (Join-Path $Package "installer\Uninstall-ClearScreen.ps1") (Join-Path $Install "services") -Force
     $pyw = Join-Path $Venv "Scripts\pythonw.exe"
@@ -571,13 +684,15 @@ try {
     Set-ItemProperty $key NoRepair 1
     Good "'ClearScreen Admin' on the desktop and in the Start menu"
 
-    Step 17 "Health check"
+    Step 18 "Health check"
     $h = Invoke-RestMethod "http://127.0.0.1:$ApiPort/health"
     Info ("status: {0}  (database: {1}, embedding service: {2}, Groq key: {3})" -f $h.status, $h.components.database,
           $h.components.embedding_service, $h.components.groq_key)
 
     Write-Host ""
     Write-Host "  ClearScreen $Version is installed." -ForegroundColor Green
+    Write-Host "  Program: $Install    Data, settings and logs: $Data"
+    if ($Root -and (Test-Path (Join-Path $Root "SQLData"))) { Write-Host "  Databases: $Root\SQLData    Backups: $Root\Backups" }
     Write-Host ""
     Write-Host "  Next steps:"
     if (-not $SkipHttps -and $LetsEncrypt) {

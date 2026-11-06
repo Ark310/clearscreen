@@ -3,17 +3,19 @@
     Removes ClearScreen from this server.
 .DESCRIPTION
     Stops and removes the three services, the program folder, the shortcuts, the firewall rule and
-    the uninstall entry. By default it KEEPS %ProgramData%\ClearScreen (settings, encrypted keys,
-    logs, the embedding model) and the SQL Server database, so a reinstall picks up where it left
-    off. -RemoveData also deletes %ProgramData%\ClearScreen. The database is never dropped by
-    this script, and SQL Server stays installed: remove either yourself if you really want them gone.
+    the uninstall entry. By default it KEEPS the data folder (e.g. D:\ClearScreen\Data: settings,
+    encrypted keys, logs, the embedding model) and the SQL Server database, so a reinstall picks up
+    where it left off. -RemoveData also deletes the data folder. The database is never dropped by
+    this script, and SQL Server and SSMS stay installed: remove them yourself if you really want them gone.
 #>
 [CmdletBinding()]
 param([switch]$RemoveData, [switch]$Unattended)
 
 $ErrorActionPreference = "Continue"
-$Install = Join-Path $env:ProgramFiles "ClearScreen"
-$Data = Join-Path $env:ProgramData "ClearScreen"
+$Reg = "HKLM:\SOFTWARE\ClearScreen"                 # where setup recorded the installation (e.g. D:\ClearScreen\...)
+$loc = Get-ItemProperty $Reg -ErrorAction SilentlyContinue
+$Install = if ($loc.InstallDir) { $loc.InstallDir } else { Join-Path $env:ProgramFiles "ClearScreen" }
+$Data = if ($loc.DataDir) { $loc.DataDir } else { Join-Path $env:ProgramData "ClearScreen" }
 
 Write-Host ""
 Write-Host "  ClearScreen uninstall" -ForegroundColor White
@@ -51,9 +53,12 @@ Remove-Item $Install -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host "    removed $Install"
 if ($RemoveData) {
     Remove-Item $Data -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item $Reg -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host "    removed $Data"
 } else {
+    Remove-ItemProperty $Reg InstallDir -ErrorAction SilentlyContinue    # keep DataDir so a reinstall finds the data
     Write-Host "    kept $Data (settings, encrypted keys, logs)"
 }
 Write-Host ""
-Write-Host "  ClearScreen removed. SQL Server and the ClearScreen database were not touched." -ForegroundColor Green
+Write-Host "  ClearScreen removed. SQL Server, SQL Server Management Studio and the ClearScreen database" -ForegroundColor Green
+Write-Host "  were not touched (remove them in Settings > Apps if you really want them gone)." -ForegroundColor Green

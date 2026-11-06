@@ -10,10 +10,45 @@ from pathlib import Path
 import httpx
 
 from clearscreen import db
-from clearscreen.config import Settings, config_dir, data_dir, logs_dir
+from clearscreen.config import Settings, config_dir, data_dir, logs_dir, registry_value
 from clearscreen.excel import read_records
 
-INSTALL_DIR = Path(os.environ.get("CLS_INSTALL_DIR", Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "ClearScreen"))
+INSTALL_DIR = Path(os.environ.get("CLS_INSTALL_DIR") or registry_value("InstallDir")
+                   or Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "ClearScreen")
+
+
+# ------------------------------------------------------------------- SSMS ---
+def ssms_path() -> Path | None:
+    """SQL Server Management Studio: where setup installed it, else the usual places."""
+    candidates = [registry_value("SsmsExe"),
+                  r"C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Ssms.exe",
+                  r"C:\Program Files\Microsoft SQL Server Management Studio 21\Release\Common7\IDE\Ssms.exe"]
+    for c in candidates:
+        if c and Path(c).is_file():
+            return Path(c)
+    return None
+
+
+def _cs_part(cs: str, *names: str) -> str | None:
+    for name in names:
+        m = re.search(rf"(?:^|;)\s*{name}\s*=\s*([^;]+)", cs or "", re.I)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def open_ssms(cs: str | None) -> str:
+    """Open SSMS connected to the ClearScreen database with the signed-in administrator's Windows
+    login (-C: trust the local server's certificate). Returns what was opened."""
+    import subprocess
+    exe = ssms_path()
+    if exe is None:
+        raise FileNotFoundError("SQL Server Management Studio is not installed. Run Setup.cmd again "
+                                "(it installs it), or install it from https://aka.ms/ssms.")
+    server = _cs_part(cs, "Server", "Data Source", "Address") or "localhost"
+    database = _cs_part(cs, "Database", "Initial Catalog") or "ClearScreen"
+    subprocess.Popen([str(exe), "-S", server, "-d", database, "-C", "-nosplash"], close_fds=True)
+    return f"{server} / {database}"
 
 
 # ------------------------------------------------------------------ HTTPS ---

@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """Where ClearScreen keeps its configuration, and the two files in it.
 
-  %ProgramData%\\ClearScreen\\config\\settings.json   plain settings (no secrets)
-  %ProgramData%\\ClearScreen\\config\\secure.dat      secrets, encrypted with Windows DPAPI
+The data folder is chosen by the installer (default D:\\ClearScreen\\Data) and recorded in the
+registry (HKLM\\SOFTWARE\\ClearScreen, DataDir):
+
+  <data>\\config\\settings.json   plain settings (no secrets)
+  <data>\\config\\secure.dat      secrets, encrypted with Windows DPAPI
                                                       (machine scope):
         groq_api_key, sql_connection_string, clients {ClientID: {name, key_hash, key_hint,
         created_utc, rotated_utc, enabled}}
@@ -24,8 +27,22 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 
+REG_KEY = r"SOFTWARE\ClearScreen"        # HKLM; the installer records where it put things (DataDir, InstallDir, SsmsExe)
+
+
+def registry_value(name: str) -> str | None:
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, REG_KEY) as k:
+            return str(winreg.QueryValueEx(k, name)[0]) or None
+    except OSError:
+        return None
+
+
 def data_dir() -> Path:
-    return Path(os.environ.get("CLS_DATA_DIR") or Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "ClearScreen")
+    """CLS_DATA_DIR (tests) > the installer's registry entry (e.g. D:\\ClearScreen\\Data) > ProgramData."""
+    return Path(os.environ.get("CLS_DATA_DIR") or registry_value("DataDir")
+                or Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "ClearScreen")
 
 
 def config_dir() -> Path:

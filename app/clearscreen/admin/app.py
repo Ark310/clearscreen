@@ -533,6 +533,14 @@ class AdminApp(tk.Tk):
         ttk.Button(row, text="Restore from a backup...", command=self.restore).pack(side="left", padx=6)
         ttk.Button(row, text="Open backup folder", command=self.open_backups).pack(side="left")
 
+        ttk.Separator(f).pack(fill="x", pady=12)
+        ttk.Label(f, text="View the raw data", style="H.TLabel").pack(anchor="w")
+        ttk.Label(f, text="Opens SQL Server Management Studio connected to the ClearScreen database with your Windows "
+                          "login. You have full rights there: changes bypass ClearScreen's checks, so take a backup "
+                          "first. Whitelist records are in the table dbo.WL_Records.", style="Muted.TLabel",
+                  wraplength=900).pack(anchor="w")
+        ttk.Button(f, text="Open SQL Server Management Studio", command=self.open_ssms).pack(anchor="w", pady=8)
+
     def load_excel(self):
         cs = self.store.get("sql_connection_string")
         clients = self.store.clients()
@@ -585,6 +593,14 @@ class AdminApp(tk.Tk):
                 services.start("ClearScreenApi")
         self.busy("Restoring the database...", work, lambda _r: (self.refresh_clients(), self.refresh_services(),
                                                                  messagebox.showinfo(PRODUCT, "Database restored.")))
+
+    def open_ssms(self):
+        try:
+            target = ops.open_ssms(self.store.get("sql_connection_string"))
+            self.status.set(f"Opening SQL Server Management Studio ({target})... If it shows a connect window: "
+                            "Windows Authentication, tick 'Trust server certificate', Connect.")
+        except Exception as e:                                    # noqa: BLE001
+            messagebox.showerror(PRODUCT, str(e))
 
     def open_backups(self):
         try:
