@@ -1,5 +1,17 @@
 # ClearScreen — changes
 
+## 1.2.1 — 2026-11-06
+
+- Fixed: setup stopped at step 11 (*Folder permissions*) with "Some or all identity references could
+  not be translated" when run with `-SkipHttps`: it tried to give the HTTPS service, which is not
+  installed then, access to folders. Service accounts are now only granted once the service exists.
+- SQL Server: *updates for other Microsoft products* is turned on **before** SQL Server setup runs, so
+  setup can include Microsoft's latest updates. Setup warns when SQL Server has no security updates
+  (version 16.0.1000.x) and says how to install them.
+- Docs: Windows Server 2025 listed; *After installing* now includes installing SQL Server's updates.
+- Re-running setup after the 1.2.0 error continues where it stopped: SQL Server, SSMS, Python and the
+  embedding service are not installed again.
+
 ## 1.2.0 — 2026-11-06
 
 **Installs on a data drive**

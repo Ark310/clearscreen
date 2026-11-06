@@ -165,6 +165,9 @@ function Set-Acl-Folder {
         $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($who, "FullControl", $inherit, $none, "Allow")))
     }
     foreach ($who in $Grants.Keys) {
+        # A service's own account (NT SERVICE\<name>) exists only once the service is registered - e.g. not the
+        # HTTPS service with -SkipHttps. Skip it then; setup grants it when the service is added later.
+        if ($who -like "NT SERVICE\*" -and -not (Get-Service -Name $who.Substring(11) -ErrorAction SilentlyContinue)) { continue }
         $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($who, $Grants[$who], $inherit, $none, "Allow")))
     }
     Set-Acl -Path $Path -AclObject $acl
@@ -258,6 +261,23 @@ function Get-SqlEdition {
     } finally { $cn.Dispose() }
 }
 
+function Enable-MicrosoftUpdate {
+    # Opt in to "updates for other Microsoft products", so SQL Server setup and Windows Update deliver SQL Server fixes.
+    try {
+        (New-Object -ComObject Microsoft.Update.ServiceManager).AddService2("7971f918-a847-4430-9279-4a52d1efe18d", 7, "") | Out-Null
+        Info "Microsoft Update on: Windows Update also delivers SQL Server security updates"
+    } catch { Warn "Could not turn on Microsoft Update; install SQL Server updates manually." }
+}
+
+function Test-SqlPatched {
+    # 16.0.1000.x is SQL Server 2022 as first released, without any security update.
+    try { $v = Get-SqlEdition } catch { return }
+    if ($v -match "version 16\.0\.1000\.") {
+        Warn "SQL Server has no security updates yet ($v)."
+        Warn "After setup: Settings > Windows Update > Check for updates, install them all, and restart the server."
+    }
+}
+
 function Install-SqlServerDeveloper {
     if (Test-RebootPending) { Fail "Windows has a restart pending, which blocks SQL Server setup. Restart the server, then run Setup.cmd again." }
     Info "installation media: about 1.1 GB from download.microsoft.com"
@@ -296,7 +316,8 @@ function Install-SqlServerDeveloper {
             "/SQLCOLLATION=SQL_Latin1_General_CP1_CI_AS",
             "/TCPENABLED=0", "/NPENABLED=0",                                     # reachable from this server only
             "/SQLMAXMEMORY=$maxMemMB", "/SQLMINMEMORY=0",
-            "/UPDATEENABLED=True")                                               # include Microsoft's latest updates
+            "/UPDATEENABLED=True", "/UPDATESOURCE=MU")                           # include Microsoft's latest updates
+        Enable-MicrosoftUpdate                                                   # before setup, so it can find them
         if ($Root) {
             # Program files, databases and backups on the ClearScreen drive. Databases and backups: administrators
             # only (SQL Server setup adds its own service account).
@@ -320,13 +341,9 @@ function Install-SqlServerDeveloper {
     if ((Get-Service MSSQLSERVER).Status -ne "Running") { Start-Service MSSQLSERVER }
     $telemetry = Get-Service SQLTELEMETRY -ErrorAction SilentlyContinue        # Developer edition allows turning it off
     if ($telemetry) { Stop-Service SQLTELEMETRY -Force -ErrorAction SilentlyContinue; Set-Service SQLTELEMETRY -StartupType Disabled }
-    try {
-        # Opt in to "updates for other Microsoft products" so Windows Update also delivers SQL Server security fixes.
-        (New-Object -ComObject Microsoft.Update.ServiceManager).AddService2("7971f918-a847-4430-9279-4a52d1efe18d", 7, "") | Out-Null
-        Info "Windows Update will also deliver SQL Server security updates"
-    } catch { Warn "Could not turn on Microsoft Update; install SQL Server updates manually." }
     Remove-Item $iso -Force -ErrorAction SilentlyContinue                       # 1.1 GB no longer needed
     Good ("SQL Server installed: {0}; memory capped at {1:N0} MB; network access off (this server only); {2} and Administrators are SQL administrators" -f (Get-SqlEdition), $maxMemMB, $admin)
+    Test-SqlPatched
     if ($Root) { Info "SQL Server program: $Root\SQLServer   databases: $Root\SQLData   backups: $Root\Backups" }
     Warn "Developer edition: for development, testing and demos only. Upgrade to Standard before real client data (see the Installation Guide)."
 }
@@ -464,7 +481,8 @@ try {
         Install-SqlServerDeveloper
     } elseif ($sqlLocal -and $sqlInstalled) {
         Step 2 "SQL Server: already installed on this server"
-        try { Good (Get-SqlEdition) } catch { Warn "installed, but this account could not sign in to it: $($_.Exception.Message)" }
+        try { Good (Get-SqlEdition); Test-SqlPatched } catch { Warn "installed, but this account could not sign in to it: $($_.Exception.Message)" }
+        Enable-MicrosoftUpdate
     } else {
         Step 2 "SQL Server: $(if ($sqlLocal) { 'not installed - skipped' } else { "using $SqlServer" })"
     }

@@ -32,7 +32,7 @@ Work through this checklist first. Setup asks for the items marked ✱.
 
 | | Item | Notes |
 |---|---|---|
-| ☐ | **An EC2 instance with Windows Server 2019 or 2022** | 4 vCPU / 16 GB RAM recommended when SQL Server runs on the same server (e.g. **t3.xlarge**). 2 vCPU / 8 GB (t3.large) works for small volumes. |
+| ☐ | **An EC2 instance with Windows Server 2019, 2022 or 2025** | 4 vCPU / 16 GB RAM recommended when SQL Server runs on the same server (e.g. **t3.xlarge**). 2 vCPU / 8 GB (t3.large) works for small volumes. |
 | ☐ | **A data drive, e.g. D:** (an extra EBS volume, NTFS) | Setup puts everything that can move on it, under `D:\ClearScreen`. It needs **30 GB free** with SQL Server and SSMS (12 GB without); the database grows with your whitelists — 100 GB or more is comfortable. |
 | ☐ | **5 GB free on C:** | Windows keeps a few SQL Server and SSMS files on C: whatever drive you choose. |
 | ☐ | **No restart pending** | If Windows Update is waiting for a restart, restart the server first — SQL Server setup refuses to run otherwise. |
@@ -91,7 +91,7 @@ only from Cloudflare means nobody can go around Cloudflare to the server.
                                            SQL Server program: D:\ClearScreen\SQLServer   databases: D:\ClearScreen\SQLData ...
    [3] SQL Server Management Studio 22     SQL Server Management Studio installed (D:\ClearScreen\SSMS\...)
    [5] Python 3.13.9                       Python at D:\ClearScreen\Program\python
-   [6] ClearScreen application files and packages   application 1.2.0 installed, packages verified
+   [6] ClearScreen application files and packages   application 1.2.1 installed, packages verified
    [7] Microsoft ODBC Driver 18 for SQL Server       installed
    [8] Embedding service (Ollama 0.40.14, CPU only)  ready
    [9] HTTPS front door (Caddy 2.11.7)               ready
@@ -103,7 +103,7 @@ only from Cloudflare means nobody can go around Cloudflare to the server.
    [16] Starting the services               downloading the embedding model bge-m3 (about 1.2 GB) ...
    [18] Health check                        status: ok  (database: ok, embedding service: ok, Groq key: configured)
 
-     ClearScreen 1.2.0 is installed.
+     ClearScreen 1.2.1 is installed.
    ```
 
 If anything fails, setup stops with a red message and the full log path
@@ -117,11 +117,14 @@ it continues where it left off.
 1. **Delete the copies of the private key** you used (e.g. `C:\Install\cert\`). ClearScreen keeps
    its own copy in `D:\ClearScreen\Data\config\tls`, readable only by administrators and the
    HTTPS service.
-2. **Check HTTPS:** open `https://api.clearscreen.example/health` in a browser. You should see
+2. **Install SQL Server's security updates:** **Settings → Windows Update → Check for updates**,
+   install everything and restart the server. Setup turns on *updates for other Microsoft products*,
+   so this includes SQL Server; repeat until nothing is left. Setup warns if SQL Server has no updates yet.
+3. **Check HTTPS:** open `https://api.clearscreen.example/health` in a browser. You should see
    `"status": "ok"`.
-3. **Add the first client:** open **ClearScreen Admin** from the desktop → **Clients** → **Add client**.
+4. **Add the first client:** open **ClearScreen Admin** from the desktop → **Clients** → **Add client**.
    See the [Administrator Guide](2-Administrator-Guide.md#4-clients-and-api-keys).
-4. **Run the smoke test** (optional, recommended) — it proves the whole chain works, with made-up data:
+5. **Run the smoke test** (optional, recommended) — it proves the whole chain works, with made-up data:
 
    ```powershell
    $env:CLS_API_KEY = "<the test client's key>"
