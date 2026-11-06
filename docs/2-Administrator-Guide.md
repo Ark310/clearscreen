@@ -185,15 +185,39 @@ The result shows how many rows were added, replaced and skipped (missing fields,
 
 ### Back up and restore the database
 
-**Back up now** writes a full, checksummed backup to SQL Server's default backup folder
-(**Open backup folder** shows it). Copy backups off the server — for example to S3 — on a schedule.
+**Back up now** writes a full, checksummed backup to SQL Server's backup folder,
+`D:\ClearScreen\Backups` (**Open backup folder** shows it). Copy backups off the server — for example to S3 — on a schedule.
 
 **Restore from a backup…** replaces **all** whitelist records with the backup's. You must type
 `RESTORE`. The API is stopped during the restore and started again afterwards.
 
 > Client names, API key fingerprints, the Groq key and settings are **not** in the database — they
-> stay in `C:\ProgramData\ClearScreen\config` and are encrypted for this server only. Back up the
-> whole server (an EC2 AMI or EBS snapshot) to protect them too.
+> stay in `D:\ClearScreen\Data\config` and are encrypted for this server only. Back up the
+> whole server (an EC2 AMI, or snapshots of **both** the C: and D: volumes) to protect them too.
+
+### View the raw data (SQL Server Management Studio)
+
+**Open SQL Server Management Studio** opens SSMS connected to the ClearScreen database with your
+Windows login. In **Object Explorer**: **Databases → ClearScreen → Tables → dbo.WL_Records** →
+right-click → **Select Top 1000 Rows**. Or open **New Query** and run, for example:
+
+```sql
+SELECT TOP 100 ClientID, Unique_ID, Screened_Values, Analyst_Allow_Reasoning, UpdatedUtc
+FROM dbo.WL_Records WHERE ClientID = 'TEST-CLIENT' ORDER BY UpdatedUtc DESC;
+```
+
+| Table | What is in it |
+|---|---|
+| `dbo.WL_Records` | The whitelist records, one row per `ClientID` + `Unique_ID` |
+| `dbo.WL_Payload_Chunks`, `dbo.WL_Chunk_Vectors` | The similar-case search's index (embeddings) — not meant for reading |
+| `dbo.CLS_SchemaVersion` | The table layout's version |
+
+If SSMS shows its **Connect** window instead: Server name `localhost`, **Windows Authentication**,
+tick **Trust server certificate**, **Connect**.
+
+> You have **full rights** in SSMS. Reading is safe; changing or deleting rows there bypasses
+> ClearScreen's checks (for example, a changed record is not re-embedded for the similar-case
+> search). Take **Back up now** first, and prefer the API or **Load from Excel** for changes.
 
 ---
 
@@ -202,7 +226,7 @@ The result shows how many rows were added, replaced and skipped (missing fields,
 _(Screenshot not included in the public repository: Logs.)_
 
 Pick a log and click **Show** (the last 400 lines), or **Open logs folder**
-(`C:\ProgramData\ClearScreen\logs`).
+(`D:\ClearScreen\Data\logs`).
 
 | Log | Use it for |
 |---|---|

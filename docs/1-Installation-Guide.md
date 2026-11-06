@@ -33,13 +33,14 @@ Work through this checklist first. Setup asks for the items marked ✱.
 | | Item | Notes |
 |---|---|---|
 | ☐ | **An EC2 instance with Windows Server 2019 or 2022** | 4 vCPU / 16 GB RAM recommended when SQL Server runs on the same server (e.g. **t3.xlarge**). 2 vCPU / 8 GB (t3.large) works for small volumes. |
-| ☐ | **At least 50 GB disk** (C: drive) | Setup needs 20 GB free when it also installs SQL Server (12 GB otherwise); the database grows with your whitelists. |
+| ☐ | **A data drive, e.g. D:** (an extra EBS volume, NTFS) | Setup puts everything that can move on it, under `D:\ClearScreen`. It needs **30 GB free** with SQL Server and SSMS (12 GB without); the database grows with your whitelists — 100 GB or more is comfortable. |
+| ☐ | **5 GB free on C:** | Windows keeps a few SQL Server and SSMS files on C: whatever drive you choose. |
 | ☐ | **No restart pending** | If Windows Update is waiting for a restart, restart the server first — SQL Server setup refuses to run otherwise. |
 | ☐ | **SQL Server** — nothing to prepare | Setup offers to install **SQL Server 2022 Developer** (free) when the server has none. You only have to accept Microsoft's license terms. Already have SQL Server? Setup uses it. ✱ |
 | ☐ | **Cloudflare set up for the domain** | `api.clearscreen.example`: an **A record** to the server's Elastic IP, **Proxied** (orange cloud); **SSL/TLS → Overview → Full (strict)**. ✱ |
 | ☐ | **The Cloudflare Origin Certificate and its private key** | Two PEM files (Cloudflare → SSL/TLS → Origin Server). Copy both to the server, e.g. to `C:\Install\cert\`. Setup asks for their paths and keeps its own protected copy. ✱ |
 | ☐ | **A Groq API key** | From console.groq.com → API Keys. A paid plan is needed for production volume. ✱ |
-| ☐ | **Internet access from the server** | To download Python, the ODBC driver, the embedding service and Caddy. |
+| ☐ | **Internet access from the server** | To download SQL Server, SSMS, Python, the ODBC driver, the embedding service and Caddy. |
 
 **AWS security group** for the instance:
 
@@ -60,6 +61,7 @@ only from Cloudflare means nobody can go around Cloudflare to the server.
 3. **Answer the questions.** Press Enter to accept the value in brackets.
 
    ```text
+   Drive for ClearScreen, SQL Server and SSMS [D:]:
    SQL Server instance [localhost]:
    SQL Server is not installed on this server.
    Install SQL Server 2022 Developer now? Free; for development, testing and demos only [Y/n]:
@@ -72,11 +74,13 @@ only from Cloudflare means nobody can go around Cloudflare to the server.
    Tip: in File Explorer, **Shift + right-click** a file → **Copy as path**, then right-click in the
    setup window to paste. Quotes around the path are fine.
 
-   The SQL Server question only appears when the server has no SQL Server yet.
+   The drive question only appears on a first install (an upgrade stays where it is). The SQL
+   Server question only appears when the server has no SQL Server yet.
 
 4. **Accept the SQL Server license** (only when setup installs SQL Server). Setup downloads
    SQL Server, opens Microsoft's license terms in a separate window, and asks you to type `ACCEPT`.
    Pressing Enter instead skips SQL Server. The install itself then takes about 10–20 minutes.
+   Setup then installs **SQL Server Management Studio** (another 10–20 minutes, no questions).
 5. **Paste the Groq API key when asked.** The input is hidden. Setup tests the key with Groq and
    stores it encrypted. If you skip it, add it later in ClearScreen Admin.
 6. **Wait.** Setup shows each step as it goes:
@@ -84,24 +88,26 @@ only from Cloudflare means nobody can go around Cloudflare to the server.
    ```text
    [1] Checking this server
    [2] SQL Server 2022 Developer           SQL Server installed: Developer Edition (64-bit), version 16.0...
-   [4] Python 3.13.9                       Python at C:\Program Files\ClearScreen\python
-   [5] ClearScreen application files and packages   application 1.1.0 installed, packages verified
-   [6] Microsoft ODBC Driver 18 for SQL Server       installed
-   [7] Embedding service (Ollama 0.40.14, CPU only)  ready
-   [8] HTTPS front door (Caddy 2.11.7)               ready
-   [9] Windows services                    ClearScreenApi registered (runs as NT SERVICE\ClearScreenApi)
-   [11] Settings                           certificate for *.clearscreen.example, clearscreen.example (...), expires 20xx-xx-xx - installed
+                                           SQL Server program: D:\ClearScreen\SQLServer   databases: D:\ClearScreen\SQLData ...
+   [3] SQL Server Management Studio 22     SQL Server Management Studio installed (D:\ClearScreen\SSMS\...)
+   [5] Python 3.13.9                       Python at D:\ClearScreen\Program\python
+   [6] ClearScreen application files and packages   application 1.2.0 installed, packages verified
+   [7] Microsoft ODBC Driver 18 for SQL Server       installed
+   [8] Embedding service (Ollama 0.40.14, CPU only)  ready
+   [9] HTTPS front door (Caddy 2.11.7)               ready
+   [10] Windows services                   ClearScreenApi registered (runs as NT SERVICE\ClearScreenApi)
+   [12] Settings                           certificate for *.clearscreen.example, clearscreen.example (...), expires 20xx-xx-xx - installed
                                            HTTPS configuration valid (your certificate, port 443 only)
-   [12] SQL Server database (localhost / ClearScreen)   database ready
-   [13] Groq API key                        Groq key tested and stored encrypted
-   [15] Starting the services               downloading the embedding model bge-m3 (about 1.2 GB) ...
-   [17] Health check                        status: ok  (database: ok, embedding service: ok, Groq key: configured)
+   [13] SQL Server database (localhost / ClearScreen)   database ready
+   [14] Groq API key                        Groq key tested and stored encrypted
+   [16] Starting the services               downloading the embedding model bge-m3 (about 1.2 GB) ...
+   [18] Health check                        status: ok  (database: ok, embedding service: ok, Groq key: configured)
 
-     ClearScreen 1.1.0 is installed.
+     ClearScreen 1.2.0 is installed.
    ```
 
 If anything fails, setup stops with a red message and the full log path
-(`C:\ProgramData\ClearScreen\logs\install.log`). Fix the problem and run **Setup.cmd** again —
+(`D:\ClearScreen\Data\logs\install.log`). Fix the problem and run **Setup.cmd** again —
 it continues where it left off.
 
 ---
@@ -109,7 +115,7 @@ it continues where it left off.
 ## 4. After installing
 
 1. **Delete the copies of the private key** you used (e.g. `C:\Install\cert\`). ClearScreen keeps
-   its own copy in `C:\ProgramData\ClearScreen\config\tls`, readable only by administrators and the
+   its own copy in `D:\ClearScreen\Data\config\tls`, readable only by administrators and the
    HTTPS service.
 2. **Check HTTPS:** open `https://api.clearscreen.example/health` in a browser. You should see
    `"status": "ok"`.
@@ -119,14 +125,34 @@ it continues where it left off.
 
    ```powershell
    $env:CLS_API_KEY = "<the test client's key>"
-   & "C:\Program Files\ClearScreen\venv\Scripts\python.exe" tools\smoke_test.py https://api.clearscreen.example TEST-CLIENT
+   & "D:\ClearScreen\Program\venv\Scripts\python.exe" tools\smoke_test.py https://api.clearscreen.example TEST-CLIENT
    ```
 
    It ends with `12/12 checks passed.` Use a dedicated test client: the made-up records stay in its whitelist.
 
 ---
 
-## 5. HTTPS through Cloudflare
+## 5. Where everything is installed
+
+| Folder | What |
+|---|---|
+| `D:\ClearScreen\Program` | ClearScreen itself: Python, the app, the embedding service, the HTTPS service, the service wrappers, `Uninstall.cmd` |
+| `D:\ClearScreen\Data` | Settings, encrypted keys and certificate (`config`), logs (`logs`), the embedding model (`ollama`), downloads and installer temp files |
+| `D:\ClearScreen\SQLServer` | SQL Server's program files |
+| `D:\ClearScreen\SQLData` | The databases (administrators and SQL Server only) |
+| `D:\ClearScreen\Backups` | Database backups from **Admin → Data → Back up now** (administrators and SQL Server only) |
+| `D:\ClearScreen\SSMS` | SQL Server Management Studio |
+
+Only Windows' own parts stay on C: — the ODBC driver, a few shared SQL Server / SSMS files and
+the installers' records. Setup records the locations in the registry
+(`HKLM\SOFTWARE\ClearScreen`), so the services, the Admin app and later upgrades find them.
+
+The `D:\ClearScreen` folder gets its own permissions: administrators and SYSTEM have full
+control, other accounts (including the services) can only read and run programs.
+
+---
+
+## 6. HTTPS through Cloudflare
 
 | Setting | Where | Value |
 |---|---|---|
@@ -150,7 +176,7 @@ straight at the server (not proxied) and open ports 80 and 443 to everyone.
 
 ---
 
-## 6. The SQL Server that setup installs
+## 7. The SQL Server that setup installs
 
 When the server has no SQL Server, setup installs **SQL Server 2022 Developer** like this:
 
@@ -158,6 +184,7 @@ When the server has no SQL Server, setup installs **SQL Server 2022 Developer** 
 |---|---|---|
 | Installation files | Microsoft's ISO from download.microsoft.com, checked against a pinned SHA-256; its `setup.exe` must carry Microsoft's signature | Nothing altered can be installed |
 | Components | Database engine only | Nothing extra to patch or secure |
+| Location | Program `D:\ClearScreen\SQLServer`, databases `D:\ClearScreen\SQLData`, backups `D:\ClearScreen\Backups` | Off the system drive |
 | Sign-in | **Windows sign-in only** — no SQL passwords exist | Nothing to leak or guess |
 | SQL administrators | The Windows account that ran setup, and the server's Administrators group | Admins can always manage it; nobody else can |
 | Network access | **Off** (TCP/IP and named pipes disabled) | Only programs on this server can reach it; port 1433 is never open |
@@ -183,21 +210,29 @@ The switch keeps the database, the tables, the logins and every record — no re
 Microsoft supports this Developer → Standard upgrade for SQL Server 2022 on a single server.
 Take a **Back up now** (Admin → Data) first, as with any change.
 
-### Connecting from SQL Server Management Studio
+### SQL Server Management Studio (SSMS)
 
-Because network access is off, SSMS must run **on the server itself** (over Remote Desktop):
-server name `localhost`, **Windows Authentication**. SSMS is not installed by setup; download it
-from Microsoft if you need it.
+Setup installs **SSMS 22** from Microsoft (the installer is checked against a pinned SHA-256 and
+Microsoft's signature). To look at the raw data: **ClearScreen Admin → Data → Open SQL Server
+Management Studio**. It opens connected to the ClearScreen database with your Windows login.
+
+If SSMS shows its **Connect** window instead: Server name `localhost`, Authentication **Windows
+Authentication**, tick **Trust server certificate**, **Connect**. Because SQL Server's network
+access is off, SSMS works **on the server itself** (over Remote Desktop) only.
+
+> Your Windows administrator login has **full rights** in SSMS: you can change and delete data.
+> Changes made there bypass ClearScreen's checks — take **Back up now** first.
 
 ---
 
-## 7. How the installation is protected
+## 8. How the installation is protected
 
 | Protection | How |
 |---|---|
 | Only HTTPS is exposed | The API and embedding service listen on `127.0.0.1` only; the firewall opens 443 only, and the AWS security group only to Cloudflare |
 | The certificate's private key is protected | Stored in `config\tls`, readable only by administrators and the HTTPS service (not even the API) |
-| Every download is verified | Pinned SHA-256 (or SHA-512) checksums; Python and the ODBC driver must also carry a valid publisher signature |
+| Every download is verified | Pinned SHA-256 (or SHA-512) checksums; Python, the ODBC driver, SQL Server's setup and the SSMS installer must also carry a valid publisher signature |
+| Locked-down install folder | `D:\ClearScreen` has its own permissions; databases and backups are readable only by administrators and SQL Server |
 | Python packages are verified | Installed with `--require-hashes` from an exact lock file |
 | Services have minimal rights | Each runs as its own virtual account (`NT SERVICE\ClearScreenApi` …), not as SYSTEM |
 | Secrets are encrypted | Groq key, SQL connection and client key fingerprints are encrypted with Windows DPAPI and readable only by administrators and the API service |
@@ -208,21 +243,22 @@ from Microsoft if you need it.
 
 ---
 
-## 8. Upgrade or repair
+## 9. Upgrade or repair
 
 Copy the new ClearScreen folder to the server and run its **Setup.cmd**. It stops the services,
 updates the program, keeps all settings, clients, keys and data, and starts everything again.
+An installation stays on the drive it was first installed on.
 
-## 9. Uninstall
+## 10. Uninstall
 
-Run **Uninstall.cmd** (in the package, or in `C:\Program Files\ClearScreen`). It removes the
+Run **Uninstall.cmd** (in the package, or in `D:\ClearScreen\Program`). It removes the
 services, program files, shortcuts and firewall rule. It asks before deleting the settings and
-keys. It **never** removes SQL Server or deletes the ClearScreen database — remove SQL Server in
-**Settings → Apps** and drop the database in SQL Server Management Studio if you really want them gone.
+keys. It **never** removes SQL Server or SSMS, or deletes the ClearScreen database — remove them in
+**Settings → Apps** and drop the database in SSMS if you really want them gone.
 
 ---
 
-## 10. Troubleshooting the installation
+## 11. Troubleshooting the installation
 
 | Message | What to do |
 |---|---|
@@ -231,10 +267,12 @@ keys. It **never** removes SQL Server or deletes the ClearScreen database — re
 | *Database setup failed* | Your Windows account cannot sign in to SQL Server, or the instance name is wrong. Fix it, then set the connection in **Admin > Settings** (setup keeps going without it). |
 | *Windows has a restart pending* | Restart the server, then run **Setup.cmd** again. |
 | *SQL Server setup failed (exit code …)* | Open the `Summary.txt` named in the message; its *Exit message* says why. Fix it and run **Setup.cmd** again. |
-| *Installing SQL Server needs at least 20 GB* | Enlarge the EBS volume (AWS console → Volumes → Modify), extend C: in Disk Management, run setup again. |
+| *D: needs at least … GB free* / *C: needs at least … GB free* | Enlarge that EBS volume (AWS console → EC2 → Volumes → Modify), then extend the drive in **Disk Management** (right-click the volume → **Extend Volume**), and run setup again. |
+| *Drive …: is not a local NTFS drive* | The new volume is not set up yet: in **Disk Management**, bring the disk online, initialise it, and create an NTFS volume with the letter D:. |
+| *SSMS could not be installed* | ClearScreen itself is fine. SSMS's logs (`ssms_*.log`) are in `D:\ClearScreen\Data\temp`. Run **Setup.cmd** again later to retry. |
 | *That key did not work* | The Groq key is wrong or expired. Paste it again or press Enter to skip. |
-| *The embedding service did not start* | See `C:\ProgramData\ClearScreen\logs\ClearScreenEmbed.err.log`. Usually port 11434 is already used — rerun setup with `-EmbedPort 11435`. |
-| *The API did not start* | See `C:\ProgramData\ClearScreen\logs\ClearScreenApi.err.log`. Usually port 8000 is already used — rerun setup with `-ApiPort 8100`. |
+| *The embedding service did not start* | See `D:\ClearScreen\Data\logs\ClearScreenEmbed.err.log`. Usually port 11434 is already used — rerun setup with `-EmbedPort 11435`. |
+| *The API did not start* | See `D:\ClearScreen\Data\logs\ClearScreenApi.err.log`. Usually port 8000 is already used — rerun setup with `-ApiPort 8100`. |
 | *The HTTPS certificate was not accepted: …* | The message says why: wrong file (certificate and key swapped, or not PEM), a key that does not belong to the certificate, a certificate that does not cover the domain, or one that expired. Download the PEM files again from Cloudflare. |
 | Cloudflare error **521** or **522** | Cloudflare cannot reach the server: `ClearScreenHttps` is stopped, or the AWS security group does not allow 443 from Cloudflare. |
 | Cloudflare error **525** or **526** | The HTTPS handshake failed: the encryption mode must be **Full (strict)** and the installed certificate must be the Cloudflare origin certificate for this domain (**Admin → Settings**). |
@@ -252,5 +290,6 @@ powershell -ExecutionPolicy Bypass -File installer\Install-ClearScreen.ps1 `
 `-Unattended` runs without questions (set the Groq key afterwards in the Admin app).
 `-SkipHttps` leaves out the HTTPS service, for servers behind another proxy or load balancer.
 `-LetsEncrypt` (with `-AcmeEmail`) uses an automatic Let's Encrypt certificate instead of certificate files.
+`-InstallDrive E:` installs to another drive instead of D: (first install only). `-NoSsms` skips SSMS.
 `-InstallSqlServer -AcceptSqlServerLicense` installs SQL Server 2022 Developer without asking (with
 `-Unattended`, both are needed); `-NoSqlServerInstall` never offers it.

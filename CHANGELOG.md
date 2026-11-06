@@ -1,5 +1,22 @@
 # ClearScreen — changes
 
+## 1.2.0 — 2026-11-06
+
+**Installs on a data drive**
+- Setup asks for a drive (default D:) and puts everything that can move under `D:\ClearScreen`:
+  the program (`Program`), settings / keys / logs / embedding model (`Data`), SQL Server's program
+  files (`SQLServer`), the databases (`SQLData`), backups (`Backups`) and SSMS (`SSMS`). Installer
+  temp files and downloads go there too. Only Windows' own parts stay on C:.
+- The `D:\ClearScreen` folder gets its own permissions (administrators full control, everyone else
+  read-only); databases and backups are readable only by administrators and SQL Server.
+- Setup checks free space on both drives before starting, and records the locations in the
+  registry (`HKLM\SOFTWARE\ClearScreen`); the app, the Admin app and uninstall read them from there.
+
+**SQL Server Management Studio**
+- Setup installs SSMS 22 (Microsoft's installer, pinned by SHA-256, Microsoft signature checked).
+- ClearScreen Admin → Data → **Open SQL Server Management Studio** opens it connected to the
+  ClearScreen database, to view the raw data.
+
 ## 1.1.0 — 2026-11-06
 
 **HTTPS through Cloudflare**
