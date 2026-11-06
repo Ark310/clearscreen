@@ -132,19 +132,33 @@ function Test-Hash($file, $spec) {
     return (Get-FileHash $file -Algorithm SHA256).Hash -eq $spec.Sha256.ToUpper()
 }
 
+function ConvertTo-CommandLineArg([string]$s) {
+    # Windows command-line quoting (what Python's argv parser expects): empty values and values with spaces or
+    # quotes are quoted; backslashes before a quote and at the end are doubled.
+    if ($s -ne "" -and $s -notmatch '[\s"]') { return $s }
+    $s = [regex]::Replace($s, '(\\*)"', { param($m) $m.Groups[1].Value * 2 + '\"' })
+    $s = [regex]::Replace($s, '(\\+)$', { param($m) $m.Groups[1].Value * 2 })
+    return '"' + $s + '"'
+}
+
 function Invoke-Py {
     # Runs a setup step with ClearScreen's Python. Secrets go in through -Stdin, never the command line.
     param([string[]]$Arguments, [string]$Stdin)
     $psi = New-Object Diagnostics.ProcessStartInfo
     $psi.FileName = $Py
-    $psi.Arguments = ($Arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join " "
+    $psi.Arguments = ($Arguments | ForEach-Object { ConvertTo-CommandLineArg ([string]$_) }) -join " "
     $psi.WorkingDirectory = Join-Path $Install "app"
     $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $p = [Diagnostics.Process]::Start($psi)
-    if ($Stdin) { $p.StandardInput.WriteLine($Stdin) }
+    if ($Stdin) {
+        # Plain UTF-8 bytes straight to the pipe: Windows PowerShell's stream writer would put a byte-order mark first.
+        $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($Stdin + "`n")
+        $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+        $p.StandardInput.BaseStream.Flush()
+    }
     $p.StandardInput.Close()
     $out = $p.StandardOutput.ReadToEnd()
     $err = $p.StandardError.ReadToEnd()

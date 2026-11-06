@@ -1,5 +1,16 @@
 # ClearScreen — changes
 
+## 1.2.2 — 2026-11-06
+
+- Fixed: setup stopped at step 12 (*Settings*) with "argument --email: expected one argument" when
+  using a certificate (no e-mail): an empty value was dropped when setup called its Python helper.
+  Setup now quotes every value by Windows' command-line rules (empty values, spaces, quotes,
+  trailing backslashes).
+- Fixed: the Groq key step (step 14) would have rejected every key: Windows PowerShell put an
+  invisible byte-order mark in front of it. Setup now sends plain UTF-8, and the helper strips such a
+  mark anyway and refuses keys with spaces or unusual characters with a clear message.
+- Steps 12–14 were rehearsed through setup's real call path (settings, database, Groq key).
+
 ## 1.2.1 — 2026-11-06
 
 - Fixed: setup stopped at step 11 (*Folder permissions*) with "Some or all identity references could

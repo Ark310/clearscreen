@@ -67,8 +67,13 @@ def sql_init(a) -> str:
     return cs
 
 
+def _read_secret() -> str:
+    """One line from stdin as UTF-8, without a byte-order mark (Windows PowerShell may add one) or spaces."""
+    return sys.stdin.buffer.readline().decode("utf-8-sig", errors="replace").strip().lstrip("﻿")
+
+
 def sql_use(_a) -> None:
-    cs = sys.stdin.readline().strip()
+    cs = _read_secret()
     ok, msg = ops.test_connection(cs)
     print(msg)
     if not ok:
@@ -79,9 +84,12 @@ def sql_use(_a) -> None:
 
 
 def groq_key(_a) -> None:
-    key = sys.stdin.readline().strip()
+    key = _read_secret()
     if not key:
         raise SystemExit("No key given.")
+    if not key.isascii() or any(c.isspace() for c in key):
+        raise SystemExit("That does not look like a Groq key (it contains spaces or unusual characters). "
+                         "Copy it again from console.groq.com.")
     ok, msg = ops.test_groq_key(key, Settings.load().groq_model)
     print(msg)
     if not ok:
