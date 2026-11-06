@@ -21,8 +21,8 @@ PDF versions of every guide are in [docs/pdf](docs/pdf).
 ## Quick start
 
 1. Copy this folder to a Windows Server (2019 or 2022). No SQL Server yet? Setup offers to install SQL Server 2022 Developer.
-2. Double-click **Setup.cmd**. Answer the questions (SQL Server, its license, domain, certificate e-mail, Groq key).
-3. Point the DNS name at the server and open ports 443 and 80.
+2. Double-click **Setup.cmd**. Answer the questions (SQL Server, its license, domain, the HTTPS certificate files, Groq key).
+3. In Cloudflare, point the domain at the server (proxied, SSL/TLS Full (strict)); in AWS, allow port 443 from Cloudflare only.
 4. Open **ClearScreen Admin** (desktop) > **Clients** > **Add client**, and give the client its API key.
 5. The client sends whitelist records to `POST /whitelist/add` and alerts to `POST /match/groq`.
 

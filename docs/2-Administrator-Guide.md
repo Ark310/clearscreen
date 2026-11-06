@@ -75,12 +75,27 @@ If setup installed SQL Server, it accepts connections from this server only, so 
 the only connection you need. For a SQL Server on another machine, use a SQL login instead (`UID=...;PWD=...` in place of
 `Trusted_Connection=yes`) and give that login only `db_datareader` and `db_datawriter`.
 
-### HTTPS and limits
+### HTTPS certificate
+
+Shows the installed certificate: the names it covers, who issued it, and when it expires. Clients
+reach ClearScreen through Cloudflare, which checks this certificate (a Cloudflare Origin
+Certificate for `*.clearscreen.example`).
+
+**Replace certificate…** — for a new certificate (before the old one expires, or if its private key
+may have leaked):
+
+1. In Cloudflare: **SSL/TLS → Origin Server → Create Certificate**, key format **PEM**. Save the
+   certificate and the private key as two files and copy them to the server.
+2. Click **Replace certificate…** and choose the certificate, then the private key.
+3. The app checks that they belong together, cover the domain and have not expired, installs them
+   and restarts the HTTPS service (a few seconds).
+4. **Delete the files you copied** — ClearScreen keeps its own protected copy.
+
+### Address and limits
 
 | Setting | Default | What it means |
 |---|---|---|
-| Domain name | api.clearscreen.example | The address clients use; the HTTPS certificate is issued for it |
-| Certificate contact email | — | Let's Encrypt's contact for certificate problems |
+| Domain name | api.clearscreen.example | The address clients use; the HTTPS certificate must cover it |
 | Requests per client per minute | 120 | More than this gets `RATE_LIMITED` for a few seconds |
 | Largest request (MB) | 100 | Bigger requests are refused (`REQUEST_TOO_LARGE`) |
 | AI reviews per alert (records) | 5 | How many similar whitelist records the AI checks per alert. Fewer = faster and cheaper |
@@ -228,4 +243,6 @@ Logs roll over at 10 MB and the last 10 files are kept.
 | `DATABASE_UNAVAILABLE` | SQL Server is down or the connection changed | **Settings** → **Test connection**; check the SQL Server service |
 | `INTERNAL_ERROR` with a reference | An unexpected error | Find the reference in the **API** log and send that log section to support |
 | Many alerts go to `REVIEW` after a big load | New records are not embedded yet | Wait; the health check shows records still pending |
-| Cannot reach the API at all | A service is stopped, or DNS / firewall | **Dashboard** → **Restart all**; check the HTTPS log |
+| Cannot reach the API at all, or Cloudflare error 521 / 522 | A service is stopped, or the Cloudflare DNS record / AWS security group changed | **Dashboard** → **Restart all**; check the HTTPS log |
+| Cloudflare error 525 / 526 | Certificate problem | **Settings** → check the certificate line; replace it if expired or wrong |
+| Cloudflare error 524 | A request took over 100 seconds | Ask the client to send 1–5 alerts per request |

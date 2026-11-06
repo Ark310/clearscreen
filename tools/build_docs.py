@@ -45,8 +45,32 @@ a { color: #2f5aa8; text-decoration: none; }
 """
 
 
+def list_friendly(text: str) -> str:
+    """Python-Markdown needs 4-space indentation inside list items and does not support fenced code
+    there. The guides use GitHub style (3 spaces, fenced code in lists), so: indent 3-space
+    continuation lines to 4, and turn indented fenced blocks into 8-space indented code blocks."""
+    out, fence = [], None
+    for line in text.split("\n"):
+        if fence is not None:
+            if line.strip() == "```":
+                out.append("")
+                fence = None
+            else:
+                out.append(" " * 8 + line[fence:] if line.strip() else "")
+            continue
+        m = re.match(r"^( {2,4})```", line)
+        if m:
+            fence = len(m.group(1))
+            out.append("")
+            continue
+        if re.match(r"^ {3}\S", line):
+            line = " " + line
+        out.append(line)
+    return "\n".join(out)
+
+
 def build(md_file: Path) -> Path:
-    text = md_file.read_text(encoding="utf-8")
+    text = list_friendly(md_file.read_text(encoding="utf-8"))
     title = re.search(r"^# (.+)$", text, re.M).group(1)
     body = re.sub(r"^# .+$", "", text, count=1, flags=re.M)
     html_body = markdown.markdown(body, extensions=["tables", "fenced_code", "sane_lists"])

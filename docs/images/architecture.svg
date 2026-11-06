@@ -28,8 +28,8 @@
 
   <rect class="box" x="280" y="200" width="160" height="120"/>
   <text class="t" x="360" y="232" text-anchor="middle">HTTPS front door</text>
-  <text class="s" x="360" y="254" text-anchor="middle">Caddy · ports 443 / 80</text>
-  <text class="s" x="360" y="270" text-anchor="middle">automatic certificate</text>
+  <text class="s" x="360" y="254" text-anchor="middle">Caddy · port 443 only</text>
+  <text class="s" x="360" y="270" text-anchor="middle">Cloudflare origin certificate</text>
   <text class="s" x="360" y="286" text-anchor="middle">security headers</text>
   <text class="s" x="360" y="302" text-anchor="middle">ClearScreenHttps</text>
 
@@ -42,7 +42,7 @@
   <text class="s" x="615" y="317" text-anchor="middle">ClearScreenApi</text>
 
   <rect class="box" x="490" y="380" width="250" height="110"/>
-  <text class="t" x="615" y="410" text-anchor="middle">SQL Server</text>
+  <text class="t" x="615" y="410" text-anchor="middle">SQL Server 2022</text>
   <text class="s" x="615" y="432" text-anchor="middle">database ClearScreen</text>
   <text class="s" x="615" y="450" text-anchor="middle">WL_Records + embedding cache</text>
   <text class="s" x="615" y="468" text-anchor="middle">service login: read / write only</text>
@@ -72,7 +72,7 @@
 
   <!-- arrows -->
   <path class="l" d="M190,260 L278,260"/>
-  <text class="lab" x="198" y="250">HTTPS</text>
+  <text class="lab" x="198" y="250">via Cloudflare</text>
   <path class="l" d="M440,260 L488,260"/>
   <path class="l" d="M615,185 L615,162"/>
   <path class="l" d="M615,335 L615,378"/>

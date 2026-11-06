@@ -203,10 +203,12 @@ Every error has the same shape — act on `error_code`, show or log `message`:
 | 429 | `GROQ_LIMIT_REACHED` | The AI provider's limit is used up | `completed` holds the results finished before the limit; resend the `not_run` alerts later |
 | 503 | `DATABASE_UNAVAILABLE`, `DATABASE_NOT_CONFIGURED`, `GROQ_NOT_CONFIGURED` | A part of the service is down or not set up | Retry later; tell the administrator if it persists |
 | 500 | `INTERNAL_ERROR` | Unexpected error; the message has a reference number | Retry once; send the reference to the administrator |
+| 524 | *(an HTML page from Cloudflare, not JSON)* | The request took longer than 100 seconds, so Cloudflare ended it | Send fewer alerts per request (1–5). The alerts that finished are not returned — send them again |
+| 502, 521, 522 | *(Cloudflare page)* | Cloudflare cannot reach ClearScreen right now | Retry later; tell the administrator if it persists |
 
 _(Screenshot not included in the public repository: Error documentation example.)_
 
-**Retrying.** `429` and `503` are temporary — retry with a growing delay (for example 5 s, 15 s,
+**Retrying.** `429`, `502`, `503`, `521` and `522` are temporary — retry with a growing delay (for example 5 s, 15 s,
 60 s). Do not retry `400`, `401`, `403`, `413` or `422` unchanged.
 
 ---
@@ -217,13 +219,18 @@ _(Screenshot not included in the public repository: Error documentation example.
 |---|---|
 | Alerts decided without the AI | well under a second each |
 | Alerts reviewed by the AI | a few seconds per similar record (up to 5 per alert); more if Groq's rate limit makes ClearScreen wait |
-| Client timeout | allow **at least 10 minutes** for a batch of alerts |
-| Alerts per `/match/groq` request | up to 500 (fewer, e.g. 25–50, give faster feedback) |
+| **Longest a request may take** | **100 seconds** — Cloudflare, in front of ClearScreen, ends longer requests (error 524) |
+| Client timeout | 120 seconds |
+| Alerts per `/match/groq` request | **send 1–5** so each request finishes within 100 seconds (up to 500 are accepted, but a large batch needing the AI would be cut off by Cloudflare) |
 | Records per `/whitelist/add` request | up to 50,000 (5,000 per request is a good size) |
 | Request size | 100 MB |
 | Requests per minute | 120 per client (ask the administrator to raise it) |
 
 Results come back in the order the alerts were sent; match them by `Unique_ID`.
+
+**Many alerts?** Send them in small requests one after another (or a few in parallel, staying under
+the requests-per-minute limit). Alerts decided without the AI return in well under a second, so
+most requests are quick; the 1–5 rule protects the ones that need the AI review.
 
 ---
 
@@ -253,7 +260,7 @@ $alert = @{
 }
 $body = [Text.Encoding]::UTF8.GetBytes(($alert | ConvertTo-Json))
 $result = Invoke-RestMethod -Method Post -Uri "https://api.clearscreen.example/match/groq" `
-    -Headers $headers -ContentType "application/json; charset=utf-8" -Body $body -TimeoutSec 600
+    -Headers $headers -ContentType "application/json; charset=utf-8" -Body $body -TimeoutSec 120
 $result | ForEach-Object { "{0}: {1} ({2})" -f $_.Unique_ID, $_.disposition, $_.rule }
 ```
 
@@ -264,7 +271,7 @@ using System.Net.Http.Json;
 
 var http = new HttpClient {
     BaseAddress = new Uri("https://api.clearscreen.example"),
-    Timeout = TimeSpan.FromMinutes(10)
+    Timeout = TimeSpan.FromSeconds(120)
 };
 http.DefaultRequestHeaders.Add("X-API-Key", Environment.GetEnvironmentVariable("CLS_API_KEY"));
 
@@ -290,7 +297,7 @@ import os
 import httpx
 
 api = httpx.Client(base_url="https://api.clearscreen.example",
-                   headers={"X-API-Key": os.environ["CLS_API_KEY"]}, timeout=600)
+                   headers={"X-API-Key": os.environ["CLS_API_KEY"]}, timeout=120)
 
 alert = {"ClientID": "ACME", "Unique_ID": "ALERT-1",
          "Screened_Fields": "Beneficiary Name,Beneficiary Country", "Screened_Values": "ACME TRADING LTD,Canada",
@@ -317,7 +324,7 @@ const res = await fetch("https://api.clearscreen.example/match/groq", {
     Database_Screened: "OFAC SDN.BDF", Screened_Date: "11/04/2026",
     Matched_Details: "Entity   Name: ACME TRADING LIMITED ...",
   }]),
-  signal: AbortSignal.timeout(600_000),
+  signal: AbortSignal.timeout(120_000),
 });
 const body = await res.json();
 if (!res.ok) throw new Error(`${res.status} ${body.error_code}: ${body.message}`);
