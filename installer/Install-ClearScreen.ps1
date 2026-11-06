@@ -24,7 +24,10 @@
 .PARAMETER SqlServer         SQL Server instance (default: localhost).
 .PARAMETER Database          Database name (default: ClearScreen).
 .PARAMETER Domain            Public DNS name for HTTPS (default: api.clearscreen.example).
-.PARAMETER AcmeEmail         Contact e-mail for the Let's Encrypt certificate (asked for if not given).
+.PARAMETER TlsCertFile       HTTPS certificate, PEM (e.g. Cloudflare Origin Certificate). Asked for if not given.
+.PARAMETER TlsKeyFile        Its private key, PEM.
+.PARAMETER LetsEncrypt       Instead of certificate files: automatic Let's Encrypt certificate (needs port 80 too).
+.PARAMETER AcmeEmail         Contact e-mail for Let's Encrypt (with -LetsEncrypt; asked for if not given).
 .PARAMETER SkipHttps         Do not install the HTTPS service (testing behind another proxy).
 .PARAMETER ApiPort           Local API port (default 8000).
 .PARAMETER EmbedPort         Local embedding service port (default 11434).
@@ -39,6 +42,9 @@ param(
     [string]$SqlServer = "localhost",
     [string]$Database = "ClearScreen",
     [string]$Domain = "api.clearscreen.example",
+    [string]$TlsCertFile,
+    [string]$TlsKeyFile,
+    [switch]$LetsEncrypt,
     [string]$AcmeEmail,
     [switch]$SkipHttps,
     [int]$ApiPort = 8000,
@@ -154,6 +160,17 @@ function Set-Acl-Folder {
         $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($who, $Grants[$who], $inherit, $none, "Allow")))
     }
     Set-Acl -Path $Path -AclObject $acl
+}
+
+function Read-PemPath($prompt, $marker) {
+    # Asks for a file path until it points to a PEM file containing $marker (the content is checked fully later).
+    while ($true) {
+        $path = (Read-Host $prompt).Trim().Trim('"')
+        if ($path -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+            if ((Get-Content -LiteralPath $path -Raw) -match [regex]::Escape($marker)) { return $path }
+            Warn "That file is not the right PEM file (it should contain $marker). Try again."
+        } else { Warn "File not found. Try again." }
+    }
 }
 
 function Test-RebootPending {
@@ -307,10 +324,30 @@ try {
             $answer = Read-Host "    Public domain name for HTTPS [$Domain]"
             if ($answer) { $Domain = $answer }
         }
-        if (-not $SkipHttps -and -not $AcmeEmail) {
+        if (-not $SkipHttps -and $LetsEncrypt -and -not $AcmeEmail) {
             $AcmeEmail = Read-Host "    E-mail for the HTTPS certificate (Let's Encrypt expiry notices)"
         }
     }
+    # HTTPS certificate files (default mode): e.g. the Cloudflare Origin Certificate + its private key, PEM.
+    $haveCert = (Test-Path (Join-Path $Data "config\tls\origin.pem")) -and (Test-Path (Join-Path $Data "config\tls\origin.key"))
+    if (-not $SkipHttps -and -not $LetsEncrypt -and -not $TlsCertFile) {
+        if ($Unattended) {
+            if (-not $haveCert) { Fail "Pass -TlsCertFile and -TlsKeyFile (PEM), or -LetsEncrypt." }
+        } else {
+            $replace = $true
+            if ($haveCert) {
+                $answer = Read-Host "    An HTTPS certificate is already installed. Press Enter to keep it, or type R to replace it"
+                $replace = $answer -match '^[Rr]'
+            }
+            if ($replace) {
+                Info "The HTTPS certificate for $Domain and its private key: two PEM files (e.g. from Cloudflare)."
+                Info "Tip: in File Explorer, Shift + right-click a file > 'Copy as path', then right-click here to paste."
+                $TlsCertFile = Read-PemPath "    Path of the certificate file" "-----BEGIN CERTIFICATE-----"
+                $TlsKeyFile = Read-PemPath "    Path of the private key file" "PRIVATE KEY-----"
+            }
+        }
+    }
+    if ($TlsCertFile -and -not $TlsKeyFile) { Fail "-TlsKeyFile is needed with -TlsCertFile." }
 
     if ($doSqlInstall) {
         Step 2 "SQL Server $($C.SqlDev.Version)"
@@ -427,14 +464,28 @@ try {
     Set-Acl-Folder $Logs @{ "NT SERVICE\ClearScreenApi" = "Modify"; "NT SERVICE\ClearScreenEmbed" = "Modify"; "NT SERVICE\ClearScreenHttps" = "Modify" }
     Set-Acl-Folder (Join-Path $Data "ollama") @{ "NT SERVICE\ClearScreenEmbed" = "Modify" }
     if (-not $SkipHttps) { Set-Acl-Folder (Join-Path $Data "caddy") @{ "NT SERVICE\ClearScreenHttps" = "Modify" } }
+    # The certificate's private key: readable by the HTTPS service only (not even the API service).
+    Set-Acl-Folder (Join-Path $Data "config\tls") @{ "NT SERVICE\ClearScreenHttps" = "ReadAndExecute" }
     Set-Acl-Folder $Downloads @{}
     Good "configuration readable only by administrators and the services; secrets encrypted on top (DPAPI)"
 
     Step 11 "Settings"
     $email = if ($AcmeEmail) { $AcmeEmail } else { "" }
+    $tlsMode = if ($LetsEncrypt) { "automatic" } else { "certificate" }
     $r = Invoke-Py @("-m", "clearscreen.setup_cli", "settings", "--domain", $Domain, "--email", $email,
-                     "--api-port", "$ApiPort", "--embed-url", $embedUrl)
+                     "--api-port", "$ApiPort", "--embed-url", $embedUrl, "--tls-mode", $tlsMode)
     if ($r.Code -ne 0) { Fail "Saving settings failed: $($r.Error)" }
+    if (-not $SkipHttps) {
+        if ($TlsCertFile) {
+            $r = Invoke-Py @("-m", "clearscreen.setup_cli", "tls-cert", "--cert", $TlsCertFile, "--key", $TlsKeyFile)
+            if ($r.Code -ne 0) { Fail "The HTTPS certificate was not accepted: $($r.Error)" }
+            Good "certificate stored in $Data\config\tls (readable only by administrators and the HTTPS service)"
+            Warn "Now delete the key file you used ($TlsKeyFile) and any other copies - ClearScreen keeps its own."
+        }
+        $out = & (Join-Path $CaddyDir "caddy.exe") validate --config (Join-Path $Data "config\Caddyfile") --adapter caddyfile 2>&1
+        if ($LASTEXITCODE -ne 0) { Fail "The HTTPS configuration is not valid: $(($out | Select-Object -Last 1))" }
+        Good "HTTPS configuration valid ($(if ($LetsEncrypt) { 'automatic Let''s Encrypt certificate' } else { 'your certificate, port 443 only' }))"
+    }
 
     Step 12 "SQL Server database ($SqlServer / $Database)"
     $r = Invoke-Py @("-m", "clearscreen.setup_cli", "sql-init", "--server", $SqlServer, "--database", $Database,
@@ -469,11 +520,16 @@ try {
 
     Step 14 "Firewall"
     if (-not $SkipHttps) {
-        if (-not (Get-NetFirewallRule -Name "ClearScreen-HTTPS" -ErrorAction SilentlyContinue)) {
+        Remove-NetFirewallRule -Name "ClearScreen-HTTPS" -ErrorAction SilentlyContinue
+        if ($LetsEncrypt) {
             New-NetFirewallRule -Name "ClearScreen-HTTPS" -DisplayName "ClearScreen HTTPS (TCP 80, 443)" -Direction Inbound `
                 -Protocol TCP -LocalPort 80, 443 -Action Allow -Profile Any | Out-Null
+            Good "inbound TCP 80 and 443 allowed (80 only redirects to HTTPS and answers certificate checks)"
+        } else {
+            New-NetFirewallRule -Name "ClearScreen-HTTPS" -DisplayName "ClearScreen HTTPS (TCP 443)" -Direction Inbound `
+                -Protocol TCP -LocalPort 443 -Action Allow -Profile Any | Out-Null
+            Good "inbound TCP 443 allowed (port 80 is not used)"
         }
-        Good "inbound TCP 80 and 443 allowed (80 only redirects to HTTPS and answers certificate checks)"
     }
     Info "the API ($ApiPort) and embedding service ($EmbedPort) listen on 127.0.0.1 only - not reachable from outside"
 
@@ -524,10 +580,15 @@ try {
     Write-Host "  ClearScreen $Version is installed." -ForegroundColor Green
     Write-Host ""
     Write-Host "  Next steps:"
-    if (-not $SkipHttps) {
-        Write-Host "   1. DNS: point $Domain (A record) to this server's public IP address."
+    if (-not $SkipHttps -and $LetsEncrypt) {
+        Write-Host "   1. DNS: point $Domain (A record, not proxied) to this server's public IP address."
         Write-Host "   2. AWS security group: allow inbound TCP 443 and 80. Keep RDP (3389) limited to your office IP."
         Write-Host "      The HTTPS certificate is issued automatically once DNS points here."
+    } elseif (-not $SkipHttps) {
+        Write-Host "   1. Cloudflare: $Domain is an A record to this server's public IP, PROXIED (orange cloud),"
+        Write-Host "      and SSL/TLS encryption mode is 'Full (strict)'."
+        Write-Host "   2. AWS security group: allow inbound TCP 443 from Cloudflare's IP ranges only; no port 80."
+        Write-Host "      Keep RDP (3389) limited to your office IP. Test: https://$Domain/health"
     }
     Write-Host "   3. Open 'ClearScreen Admin' (desktop) > Clients > Add client, and give each client its API key."
     Write-Host "   4. Load whitelist records: via POST /whitelist/add, or Admin > Data > Load from Excel."

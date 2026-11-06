@@ -17,14 +17,107 @@ INSTALL_DIR = Path(os.environ.get("CLS_INSTALL_DIR", Path(os.environ.get("Progra
 
 
 # ------------------------------------------------------------------ HTTPS ---
+# tls_mode "certificate": a certificate + private key supplied by you (e.g. a Cloudflare Origin
+# Certificate, with Cloudflare proxying the domain). Port 443 only, nothing to renew.
+# tls_mode "automatic": Caddy gets and renews a Let's Encrypt certificate itself (needs port 80 too).
+def tls_dir() -> Path:
+    return config_dir() / "tls"          # Administrators, SYSTEM and the HTTPS service only (installer sets it)
+
+
+def cert_file() -> Path:
+    return tls_dir() / "origin.pem"
+
+
+def key_file() -> Path:
+    return tls_dir() / "origin.key"
+
+
+def _covers(pattern: str, host: str) -> bool:
+    pattern, host = pattern.lower().rstrip("."), host.lower().rstrip(".")
+    if pattern.startswith("*."):                      # a wildcard covers exactly one extra label
+        head, _, rest = host.partition(".")
+        return bool(head) and rest == pattern[2:]
+    return pattern == host
+
+
+def inspect_certificate(cert_path, key_path=None, domain: str | None = None) -> dict:
+    """Check a PEM certificate (and its private key): readable, not expired, covers the domain,
+    key belongs to it. Returns {names, issuer, expires, days_left}; raises ValueError with a plain
+    explanation otherwise. Uses only Python's ssl module."""
+    import ssl
+    from datetime import timezone
+    data = Path(cert_path).read_bytes()
+    if b"-----BEGIN CERTIFICATE-----" not in data:
+        raise ValueError("The certificate must be in PEM format: a text file that starts with "
+                         "-----BEGIN CERTIFICATE-----. In Cloudflare choose the PEM key format.")
+    if b"PRIVATE KEY-----" in data:
+        raise ValueError("This file also contains a private key. Choose the certificate and the key as two separate files.")
+    try:
+        info = ssl._ssl._test_decode_cert(str(cert_path))            # stdlib X.509 reader (first certificate)
+    except Exception as e:                                         # noqa: BLE001
+        raise ValueError(f"The certificate file could not be read: {e}") from e
+    names = [v for k, v in info.get("subjectAltName", ()) if k == "DNS"]
+    issuer = dict(x[0] for x in info.get("issuer", ()))
+    expires = datetime.fromtimestamp(ssl.cert_time_to_seconds(info["notAfter"]), tz=timezone.utc)
+    days_left = (expires - datetime.now(timezone.utc)).days
+    result = {"names": names, "issuer": issuer.get("organizationName") or issuer.get("commonName", "?"),
+              "issuer_detail": issuer.get("organizationalUnitName") or issuer.get("commonName", ""),
+              "expires": expires.strftime("%Y-%m-%d"), "days_left": days_left}
+    if days_left < 0:
+        raise ValueError(f"The certificate expired on {result['expires']}.")
+    if domain and not any(_covers(n, domain) for n in names):
+        raise ValueError(f"The certificate is for {', '.join(names) or '(no names)'}, which does not cover {domain}.")
+    if key_path is not None:
+        key = Path(key_path).read_bytes()
+        if b"PRIVATE KEY-----" not in key:
+            raise ValueError("The key file must be the private key in PEM format: a text file that starts with "
+                             "-----BEGIN PRIVATE" " KEY-----.")
+        if b"ENCRYPTED" in key:
+            raise ValueError("The private key is password-protected. Use the unprotected key Cloudflare gave you.")
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        try:
+            ctx.load_cert_chain(str(cert_path), str(key_path), password=lambda: b"")
+        except ssl.SSLError as e:
+            raise ValueError("The private key does not belong to this certificate.") from e
+    return result
+
+
+def install_certificate(cert_src, key_src, domain: str) -> dict:
+    """Check the certificate + key, then copy them into the protected tls folder."""
+    info = inspect_certificate(cert_src, key_src, domain)
+    tls_dir().mkdir(parents=True, exist_ok=True)
+    cert_file().write_bytes(Path(cert_src).read_bytes())
+    key_file().write_bytes(Path(key_src).read_bytes())
+    return info
+
+
+def certificate_status(s: Settings) -> str:
+    if s.tls_mode != "certificate":
+        return f"Automatic (Let's Encrypt) for {s.domain}"
+    if not cert_file().exists() or not key_file().exists():
+        return "NO CERTIFICATE INSTALLED - HTTPS will not work"
+    try:
+        i = inspect_certificate(cert_file(), key_file(), s.domain)
+    except ValueError as e:
+        return f"PROBLEM: {e}"
+    warn = "  - RENEW SOON" if i["days_left"] < 30 else ""
+    return f"{', '.join(i['names'])} - {i['issuer']} - expires {i['expires']} ({i['days_left']:,} days){warn}"
+
+
 def caddyfile(s: Settings) -> str:
-    """The HTTPS front door: automatic Let's Encrypt certificate for the domain, security headers,
+    """The HTTPS front door: the certificate (your own, or automatic Let's Encrypt), security headers,
     request size limit, everything passed to the API on 127.0.0.1. No access log (it would record
     the X-API-Key header); the API keeps its own access log without keys."""
     caddy_data = (data_dir() / "caddy").as_posix()
-    email = f"\n\temail {s.acme_email}" if s.acme_email else ""
+    if s.tls_mode == "certificate":
+        options = "\n\tauto_https off"                          # no Let's Encrypt, no port 80
+        site = f"https://{s.domain}:443"
+        tls = f'\n\ttls "{cert_file().as_posix()}" "{key_file().as_posix()}"'
+    else:
+        options = f"\n\temail {s.acme_email}" if s.acme_email else ""
+        site, tls = s.domain, ""
     return f"""# Written by ClearScreen Admin - changes here are overwritten.
-{{{email}
+{{{options}
 \tstorage file_system {caddy_data}
 \tadmin off
 \tlog {{
@@ -36,7 +129,7 @@ def caddyfile(s: Settings) -> str:
 \t}}
 }}
 
-{s.domain} {{
+{site} {{{tls}
 \tencode gzip
 \trequest_body {{
 \t\tmax_size {s.max_request_mb}MB

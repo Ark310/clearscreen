@@ -183,6 +183,7 @@ class AdminApp(tk.Tk):
                     lines.append(f"  {k:20} {v}")
             except Exception as e:                                # noqa: BLE001
                 lines.append(f"\nAPI /health: NOT REACHABLE ({type(e).__name__})")
+            lines.append("\nHTTPS certificate: " + ops.certificate_status(Settings.load()))
             cs = self.store.get("sql_connection_string")
             lines.append("\nSQL Server: " + (ops.test_connection(cs)[1] if cs else "no connection string set"))
             if cs:
@@ -351,20 +352,26 @@ class AdminApp(tk.Tk):
         ttk.Button(f, text="Test connection", command=self.test_sql).grid(row=2, column=3)
 
         ttk.Separator(f).grid(row=3, column=0, columnspan=4, sticky="ew", pady=10)
-        ttk.Label(f, text="HTTPS and limits", style="H.TLabel").grid(row=4, column=0, sticky="w")
+        ttk.Label(f, text="HTTPS certificate", style="H.TLabel").grid(row=4, column=0, sticky="w")
+        self.cert_state = tk.StringVar()
+        ttk.Label(f, textvariable=self.cert_state, wraplength=560).grid(row=4, column=1, sticky="w")
+        ttk.Button(f, text="Replace certificate...", command=self.replace_certificate).grid(row=4, column=2, padx=4)
+
+        ttk.Separator(f).grid(row=5, column=0, columnspan=4, sticky="ew", pady=10)
+        ttk.Label(f, text="Address and limits", style="H.TLabel").grid(row=6, column=0, sticky="w")
         self.vars = {}
-        for i, (key, label) in enumerate((("domain", "Domain name"), ("acme_email", "Certificate contact email"),
+        for i, (key, label) in enumerate((("domain", "Domain name"),
                                           ("rate_limit_per_minute", "Requests per client per minute"),
                                           ("max_request_mb", "Largest request (MB)"),
-                                          ("ai_max_cases", "AI reviews per alert (records)")), start=5):
+                                          ("ai_max_cases", "AI reviews per alert (records)")), start=7):
             ttk.Label(f, text=label).grid(row=i, column=0, sticky="w", pady=2)
             var = tk.StringVar(value=str(getattr(s, key)))
             self.vars[key] = var
             ttk.Entry(f, textvariable=var, width=42).grid(row=i, column=1, sticky="w")
         self.docs_var = tk.BooleanVar(value=s.enable_docs)
         ttk.Checkbutton(f, text="Publish the API documentation page (/docs)", variable=self.docs_var).grid(
-            row=10, column=1, sticky="w", pady=4)
-        ttk.Button(f, text="Save and restart services", command=self.save_settings).grid(row=11, column=1, sticky="w",
+            row=11, column=1, sticky="w", pady=4)
+        ttk.Button(f, text="Save and restart services", command=self.save_settings).grid(row=12, column=1, sticky="w",
                                                                                          pady=8)
         f.columnconfigure(1, weight=1)
         self.refresh_secret_state()
@@ -372,6 +379,38 @@ class AdminApp(tk.Tk):
     def refresh_secret_state(self):
         self.groq_state.set("Configured" if self.store.get("groq_api_key") else "NOT SET - matching will not work")
         self.sql_state.set(ops.mask_connection_string(self.store.get("sql_connection_string")))
+        self.cert_state.set(ops.certificate_status(Settings.load()))
+
+    def replace_certificate(self):
+        from tkinter import filedialog
+        s = Settings.load()
+        messagebox.showinfo(PRODUCT, f"Choose two PEM files for {s.domain}:\n\n1. the certificate\n2. its private key\n\n"
+                                     "For Cloudflare: SSL/TLS > Origin Server > Create Certificate, key format PEM.")
+        cert = filedialog.askopenfilename(parent=self, title="1 of 2: the certificate (PEM)",
+                                          filetypes=[("PEM certificate", "*.pem *.crt *.cer"), ("All files", "*.*")])
+        if not cert:
+            return
+        key = filedialog.askopenfilename(parent=self, title="2 of 2: the private key (PEM)",
+                                         filetypes=[("PEM private key", "*.pem *.key"), ("All files", "*.*")])
+        if not key:
+            return
+
+        def work():
+            info = ops.install_certificate(cert, key, s.domain)
+            s.tls_mode = "certificate"
+            s.save()
+            ops.write_caddyfile(s)
+            services.restart("ClearScreenHttps")
+            return info
+
+        def done(info):
+            self.settings = s
+            self.refresh_secret_state()
+            self.refresh_services()
+            messagebox.showinfo(PRODUCT, f"Certificate installed for {', '.join(info['names'])}, expires {info['expires']}. "
+                                         "The HTTPS service was restarted.\n\nClearScreen keeps its own protected copy: "
+                                         f"delete the key file you chose ({key}) and any other copies.")
+        self.busy("Checking and installing the certificate...", work, done)
 
     def set_groq_key(self):
         key = simpledialog.askstring(PRODUCT, "Paste the Groq API key (starts with gsk_):", show="•", parent=self)
@@ -456,7 +495,6 @@ class AdminApp(tk.Tk):
         s = Settings.load()
         try:
             s.domain = self.vars["domain"].get().strip()
-            s.acme_email = self.vars["acme_email"].get().strip()
             s.rate_limit_per_minute = max(1, int(self.vars["rate_limit_per_minute"].get()))
             s.max_request_mb = max(1, int(self.vars["max_request_mb"].get()))
             s.ai_max_cases = min(10, max(1, int(self.vars["ai_max_cases"].get())))

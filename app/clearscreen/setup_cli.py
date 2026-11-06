@@ -96,6 +96,8 @@ def settings(a) -> None:
         s.domain = a.domain
     if a.email is not None:
         s.acme_email = a.email
+    if a.tls_mode:
+        s.tls_mode = a.tls_mode
     if a.api_port:
         s.api_port = a.api_port
     if a.embed_url:
@@ -103,6 +105,19 @@ def settings(a) -> None:
     s.save()
     ops.write_caddyfile(s)
     print("settings saved; HTTPS configuration written")
+
+
+def tls_cert(a) -> None:
+    """Check a certificate + private key (PEM) and install them for the HTTPS service."""
+    s = Settings.load()
+    try:
+        i = ops.install_certificate(a.cert, a.key, s.domain)
+    except (ValueError, OSError) as e:
+        raise SystemExit(str(e))
+    s.tls_mode = "certificate"
+    s.save()
+    ops.write_caddyfile(s)
+    print(f"certificate for {', '.join(i['names'])} ({i['issuer']}), expires {i['expires']} - installed")
 
 
 def pull_model(_a) -> None:
@@ -125,7 +140,7 @@ def pull_model(_a) -> None:
 def status(_a) -> None:
     st = SecureStore()
     s = Settings.load()
-    print(json.dumps({"domain": s.domain, "api_port": s.api_port, "embed_url": s.embed_url,
+    print(json.dumps({"domain": s.domain, "tls": ops.certificate_status(s), "api_port": s.api_port, "embed_url": s.embed_url,
                       "sql_connection": ops.mask_connection_string(st.get("sql_connection_string")),
                       "groq_key": "set" if st.get("groq_api_key") else "missing",
                       "clients": sorted(st.clients())}, indent=2))
@@ -145,12 +160,16 @@ def main(argv=None):
     x.add_argument("--email")
     x.add_argument("--api-port", type=int)
     x.add_argument("--embed-url")
+    x.add_argument("--tls-mode", choices=("certificate", "automatic"))
+    x = sub.add_parser("tls-cert")
+    x.add_argument("--cert", required=True)
+    x.add_argument("--key", required=True)
     sub.add_parser("pull-model")
     sub.add_parser("status")
     a = p.parse_args(argv)
     try:
         {"sql-init": sql_init, "sql-use": sql_use, "groq-key": groq_key, "settings": settings,
-         "pull-model": pull_model, "status": status}[a.cmd](a)
+         "tls-cert": tls_cert, "pull-model": pull_model, "status": status}[a.cmd](a)
     except SystemExit:
         raise
     except Exception as e:                                        # noqa: BLE001

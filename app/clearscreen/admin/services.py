@@ -7,7 +7,7 @@ import time
 SERVICES = [
     ("ClearScreenEmbed", "Embedding service (bge-m3 on CPU, port 11434, local only)"),
     ("ClearScreenApi", "ClearScreen API (port 8000, local only)"),
-    ("ClearScreenHttps", "HTTPS front door (Caddy, ports 80/443, public)"),
+    ("ClearScreenHttps", "HTTPS front door (Caddy, port 443, public)"),
 ]
 NAMES = [s for s, _ in SERVICES]
 

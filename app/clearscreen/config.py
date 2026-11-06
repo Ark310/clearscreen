@@ -40,7 +40,8 @@ def logs_dir() -> Path:
 @dataclass
 class Settings:
     domain: str = "api.clearscreen.example"
-    acme_email: str = ""                       # Let's Encrypt contact for the HTTPS certificate
+    tls_mode: str = "certificate"              # "certificate" (your own, e.g. Cloudflare Origin) or "automatic" (Let's Encrypt)
+    acme_email: str = ""                       # Let's Encrypt contact (automatic mode only)
     api_host: str = "127.0.0.1"                # the API listens only locally; HTTPS proxy faces out
     api_port: int = 8000
     embed_url: str = "http://127.0.0.1:11434"  # the local embedding service (bge-m3 on CPU)
