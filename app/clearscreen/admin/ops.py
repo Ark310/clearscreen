@@ -126,6 +126,48 @@ def install_certificate(cert_src, key_src, domain: str) -> dict:
     return info
 
 
+PFX_SUFFIXES = (".pfx", ".p12")
+
+
+def pfx_to_pem(pfx_path, password: str) -> tuple[bytes, bytes]:
+    """Unpack a .pfx / .p12 file (certificate + private key, password-protected) into a PEM certificate
+    (followed by any chain certificates in the file) and an unencrypted PKCS#8 PEM private key.
+    The HTTPS service reads only PEM; the key is protected by the tls folder's permissions instead."""
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, pkcs12
+    data = Path(pfx_path).read_bytes()
+    attempts = [password.encode("utf-8")] + ([None] if not password else [])   # "no password" has two encodings
+    for pw in attempts:
+        try:
+            key, cert, extra = pkcs12.load_key_and_certificates(data, pw)
+            break
+        except ValueError:
+            continue
+    else:
+        raise ValueError("The .pfx file could not be opened: the password is wrong, or it is not a .pfx file.")
+    if cert is None or key is None:
+        raise ValueError("The .pfx file does not contain both a certificate and its private key.")
+    cert_pem = cert.public_bytes(Encoding.PEM) + b"".join(c.public_bytes(Encoding.PEM) for c in (extra or []))
+    return cert_pem, key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+
+
+def install_pfx(pfx_path, password: str, domain: str) -> dict:
+    """Unpack the .pfx, check the result like PEM files (key belongs to the certificate, covers the domain,
+    not expired), and only then replace the installed certificate."""
+    cert_pem, key_pem = pfx_to_pem(pfx_path, password)
+    tls_dir().mkdir(parents=True, exist_ok=True)
+    new_cert, new_key = tls_dir() / "incoming.pem", tls_dir() / "incoming.key"
+    try:
+        new_cert.write_bytes(cert_pem)
+        new_key.write_bytes(key_pem)
+        info = inspect_certificate(new_cert, new_key, domain)
+        os.replace(new_cert, cert_file())
+        os.replace(new_key, key_file())
+        return info
+    finally:
+        for f in (new_cert, new_key):
+            f.unlink(missing_ok=True)
+
+
 def certificate_status(s: Settings) -> str:
     if s.tls_mode != "certificate":
         return f"Automatic (Let's Encrypt) for {s.domain}"

@@ -67,6 +67,12 @@ def sql_init(a) -> str:
     return cs
 
 
+def _read_line() -> str:
+    """One line from stdin as UTF-8, exactly as typed (only a byte-order mark and the line end removed) -
+    for passwords, which may contain spaces."""
+    return sys.stdin.buffer.readline().decode("utf-8-sig", errors="replace").lstrip("﻿").rstrip("\r\n")
+
+
 def _read_secret() -> str:
     """One line from stdin as UTF-8, without a byte-order mark (Windows PowerShell may add one) or spaces."""
     return sys.stdin.buffer.readline().decode("utf-8-sig", errors="replace").strip().lstrip("﻿")
@@ -128,6 +134,19 @@ def tls_cert(a) -> None:
     print(f"certificate for {', '.join(i['names'])} ({i['issuer']}), expires {i['expires']} - installed")
 
 
+def tls_pfx(a) -> None:
+    """Unpack a .pfx (password on stdin), check it, and install it for the HTTPS service as PEM."""
+    s = Settings.load()
+    try:
+        i = ops.install_pfx(a.pfx, _read_line(), s.domain)
+    except (ValueError, OSError) as e:
+        raise SystemExit(str(e))
+    s.tls_mode = "certificate"
+    s.save()
+    ops.write_caddyfile(s)
+    print(f"certificate for {', '.join(i['names'])} ({i['issuer']}), expires {i['expires']} - installed")
+
+
 def pull_model(_a) -> None:
     s = Settings.load()
     with httpx.stream("POST", s.embed_url.rstrip("/") + "/api/pull", json={"model": s.embed_model},
@@ -172,12 +191,14 @@ def main(argv=None):
     x = sub.add_parser("tls-cert")
     x.add_argument("--cert", required=True)
     x.add_argument("--key", required=True)
+    x = sub.add_parser("tls-pfx")
+    x.add_argument("--pfx", required=True)
     sub.add_parser("pull-model")
     sub.add_parser("status")
     a = p.parse_args(argv)
     try:
         {"sql-init": sql_init, "sql-use": sql_use, "groq-key": groq_key, "settings": settings,
-         "tls-cert": tls_cert, "pull-model": pull_model, "status": status}[a.cmd](a)
+         "tls-cert": tls_cert, "tls-pfx": tls_pfx, "pull-model": pull_model, "status": status}[a.cmd](a)
     except SystemExit:
         raise
     except Exception as e:                                        # noqa: BLE001

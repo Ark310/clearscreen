@@ -384,19 +384,28 @@ class AdminApp(tk.Tk):
     def replace_certificate(self):
         from tkinter import filedialog
         s = Settings.load()
-        messagebox.showinfo(PRODUCT, f"Choose two PEM files for {s.domain}:\n\n1. the certificate\n2. its private key\n\n"
-                                     "For Cloudflare: SSL/TLS > Origin Server > Create Certificate, key format PEM.")
-        cert = filedialog.askopenfilename(parent=self, title="1 of 2: the certificate (PEM)",
-                                          filetypes=[("PEM certificate", "*.pem *.crt *.cer"), ("All files", "*.*")])
+        messagebox.showinfo(PRODUCT, f"Choose the HTTPS certificate for {s.domain}:\n\n"
+                                     "- a .pfx file (certificate and private key in one, with a password), or\n"
+                                     "- a PEM certificate file; you are then asked for its private key file.")
+        cert = filedialog.askopenfilename(parent=self, title="The certificate (.pfx or PEM)",
+                                          filetypes=[("Certificate", "*.pfx *.p12 *.pem *.crt *.cer"), ("All files", "*.*")])
         if not cert:
             return
-        key = filedialog.askopenfilename(parent=self, title="2 of 2: the private key (PEM)",
-                                         filetypes=[("PEM private key", "*.pem *.key"), ("All files", "*.*")])
-        if not key:
-            return
+        if cert.lower().endswith(ops.PFX_SUFFIXES):
+            password = simpledialog.askstring(PRODUCT, "Password of the .pfx file:", show="•", parent=self)
+            if password is None:
+                return
+            key = cert                                            # the .pfx holds the key; delete it afterwards
+        else:
+            password = None
+            key = filedialog.askopenfilename(parent=self, title="Its private key (PEM)",
+                                             filetypes=[("PEM private key", "*.pem *.key"), ("All files", "*.*")])
+            if not key:
+                return
 
         def work():
-            info = ops.install_certificate(cert, key, s.domain)
+            info = (ops.install_pfx(cert, password, s.domain) if password is not None
+                    else ops.install_certificate(cert, key, s.domain))
             s.tls_mode = "certificate"
             s.save()
             ops.write_caddyfile(s)
@@ -409,7 +418,7 @@ class AdminApp(tk.Tk):
             self.refresh_services()
             messagebox.showinfo(PRODUCT, f"Certificate installed for {', '.join(info['names'])}, expires {info['expires']}. "
                                          "The HTTPS service was restarted.\n\nClearScreen keeps its own protected copy: "
-                                         f"delete the key file you chose ({key}) and any other copies.")
+                                         f"delete the file holding the private key ({key}) and any other copies.")
         self.busy("Checking and installing the certificate...", work, done)
 
     def set_groq_key(self):

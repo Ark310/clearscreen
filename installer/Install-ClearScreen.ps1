@@ -26,6 +26,8 @@
 .PARAMETER Domain            Public DNS name for HTTPS (default: api.clearscreen.example).
 .PARAMETER TlsCertFile       HTTPS certificate, PEM (e.g. Cloudflare Origin Certificate). Asked for if not given.
 .PARAMETER TlsKeyFile        Its private key, PEM.
+.PARAMETER TlsPfxFile        Instead of the two PEM files: a .pfx / .p12 file (certificate + key). Its password is asked
+                             for (hidden), never taken on the command line.
 .PARAMETER LetsEncrypt       Instead of certificate files: automatic Let's Encrypt certificate (needs port 80 too).
 .PARAMETER AcmeEmail         Contact e-mail for Let's Encrypt (with -LetsEncrypt; asked for if not given).
 .PARAMETER SkipHttps         Do not install the HTTPS service (testing behind another proxy).
@@ -48,6 +50,7 @@ param(
     [string]$Domain = "api.clearscreen.example",
     [string]$TlsCertFile,
     [string]$TlsKeyFile,
+    [string]$TlsPfxFile,
     [switch]$LetsEncrypt,
     [string]$AcmeEmail,
     [switch]$SkipHttps,
@@ -187,15 +190,23 @@ function Set-Acl-Folder {
     Set-Acl -Path $Path -AclObject $acl
 }
 
-function Read-PemPath($prompt, $marker) {
-    # Asks for a file path until it points to a PEM file containing $marker (the content is checked fully later).
+function Read-PemPath($prompt, $marker, [switch]$AllowPfx) {
+    # Asks for a file path until it points to a PEM file containing $marker - or, with -AllowPfx, a .pfx / .p12
+    # file (certificate + key in one). The content is checked fully later.
     while ($true) {
         $path = (Read-Host $prompt).Trim().Trim('"')
         if ($path -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+            if ($AllowPfx -and $path -match '\.(pfx|p12)$') { return $path }
             if ((Get-Content -LiteralPath $path -Raw) -match [regex]::Escape($marker)) { return $path }
-            Warn "That file is not the right PEM file (it should contain $marker). Try again."
+            Warn "That file is not the right file (it should be a .pfx, or a PEM file containing $marker). Try again."
         } else { Warn "File not found. Try again." }
     }
+}
+
+function ConvertFrom-SecureText([Security.SecureString]$secure) {
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 }
 
 function Resolve-Locations {
@@ -458,7 +469,7 @@ try {
     }
     # HTTPS certificate files (default mode): e.g. the Cloudflare Origin Certificate + its private key, PEM.
     $haveCert = (Test-Path (Join-Path $Data "config\tls\origin.pem")) -and (Test-Path (Join-Path $Data "config\tls\origin.key"))
-    if (-not $SkipHttps -and -not $LetsEncrypt -and -not $TlsCertFile) {
+    if (-not $SkipHttps -and -not $LetsEncrypt -and -not $TlsCertFile -and -not $TlsPfxFile) {
         if ($Unattended) {
             if (-not $haveCert) { Fail "Pass -TlsCertFile and -TlsKeyFile (PEM), or -LetsEncrypt." }
         } else {
@@ -468,12 +479,22 @@ try {
                 $replace = $answer -match '^[Rr]'
             }
             if ($replace) {
-                Info "The HTTPS certificate for $Domain and its private key: two PEM files (e.g. from Cloudflare)."
+                Info "The HTTPS certificate for ${Domain}: a .pfx file (certificate and private key in one, with a"
+                Info "password), or two PEM files (the certificate, then its private key)."
                 Info "Tip: in File Explorer, Shift + right-click a file > 'Copy as path', then right-click here to paste."
-                $TlsCertFile = Read-PemPath "    Path of the certificate file" "-----BEGIN CERTIFICATE-----"
-                $TlsKeyFile = Read-PemPath "    Path of the private key file" "PRIVATE KEY-----"
+                $path = Read-PemPath "    Path of the certificate file (.pfx or PEM)" "-----BEGIN CERTIFICATE-----" -AllowPfx
+                if ($path -match '\.(pfx|p12)$') { $TlsPfxFile = $path }
+                else {
+                    $TlsCertFile = $path
+                    $TlsKeyFile = Read-PemPath "    Path of the private key file" "PRIVATE KEY-----"
+                }
             }
         }
+    }
+    if ($TlsPfxFile) {
+        if ($Unattended) { Fail "A .pfx needs its password typed in: run setup without -Unattended, or use PEM files." }
+        if (-not (Test-Path -LiteralPath $TlsPfxFile -PathType Leaf)) { Fail "File not found: $TlsPfxFile" }
+        $TlsPfxPassword = Read-Host "    Password of the .pfx file (input is hidden)" -AsSecureString
     }
     if ($TlsCertFile -and -not $TlsKeyFile) { Fail "-TlsKeyFile is needed with -TlsCertFile." }
 
@@ -627,7 +648,26 @@ try {
             Good "certificate stored in $Data\config\tls (readable only by administrators and the HTTPS service)"
             Warn "Now delete the key file you used ($TlsKeyFile) and any other copies - ClearScreen keeps its own."
         }
-        $out = & (Join-Path $CaddyDir "caddy.exe") validate --config (Join-Path $Data "config\Caddyfile") --adapter caddyfile 2>&1
+        if ($TlsPfxFile) {
+            while ($true) {
+                $plain = ConvertFrom-SecureText $TlsPfxPassword
+                $r = Invoke-Py @("-m", "clearscreen.setup_cli", "tls-pfx", "--pfx", $TlsPfxFile) -Stdin $plain
+                $plain = $null
+                if ($r.Code -eq 0) { break }
+                if ($r.Error -notmatch "password is wrong") { Fail "The HTTPS certificate was not accepted: $($r.Error)" }
+                Warn $r.Error
+                $TlsPfxPassword = Read-Host "    Type the .pfx password again (input is hidden), or press Enter to stop" -AsSecureString
+                if ($TlsPfxPassword.Length -eq 0) { Fail "The .pfx password was not accepted." }
+            }
+            $TlsPfxPassword = $null
+            Good "certificate unpacked and stored in $Data\config\tls (readable only by administrators and the HTTPS service)"
+            Warn "Now delete the .pfx you used ($TlsPfxFile) and any other copies - ClearScreen keeps its own."
+        }
+        # Caddy writes its normal progress messages to stderr; Windows PowerShell would turn them into errors under
+        # ErrorActionPreference=Stop, so the exit code alone decides here.
+        $saved = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        try { $out = & (Join-Path $CaddyDir "caddy.exe") validate --config (Join-Path $Data "config\Caddyfile") --adapter caddyfile 2>&1 }
+        finally { $ErrorActionPreference = $saved }
         if ($LASTEXITCODE -ne 0) { Fail "The HTTPS configuration is not valid: $(($out | Select-Object -Last 1))" }
         Good "HTTPS configuration valid ($(if ($LetsEncrypt) { 'automatic Let''s Encrypt certificate' } else { 'your certificate, port 443 only' }))"
     }
@@ -651,7 +691,7 @@ try {
                   else { "    Paste the Groq API key (input is hidden)" }
         while ($true) {
             $secure = Read-Host $prompt -AsSecureString
-            $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+            $plain = ConvertFrom-SecureText $secure
             if (-not $plain) {
                 if ($haveKey) { Good "kept the existing key"; break }
                 Warn "No key entered - set it later in ClearScreen Admin > Settings."; break
