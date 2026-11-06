@@ -84,12 +84,14 @@ Certificate for `*.clearscreen.example`).
 **Replace certificate…** — for a new certificate (before the old one expires, or if its private key
 may have leaked):
 
-1. In Cloudflare: **SSL/TLS → Origin Server → Create Certificate**, key format **PEM**. Save the
-   certificate and the private key as two files and copy them to the server.
-2. Click **Replace certificate…** and choose the certificate, then the private key.
+1. Get the new certificate from IT: a **.pfx** file and its password, or two **PEM** files (in
+   Cloudflare: **SSL/TLS → Origin Server → Create Certificate**). Copy the file(s) to the server.
+2. Click **Replace certificate…** and choose the .pfx (you are asked for its password) — or the PEM
+   certificate, then its private key.
 3. The app checks that they belong together, cover the domain and have not expired, installs them
    and restarts the HTTPS service (a few seconds).
-4. **Delete the files you copied** — ClearScreen keeps its own protected copy.
+4. **Delete the files you copied** — ClearScreen keeps its own protected copy. The .pfx password is
+   not stored and not needed again.
 
 ### Address and limits
 

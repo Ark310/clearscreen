@@ -1,5 +1,21 @@
 # ClearScreen — changes
 
+## 1.3.0 — 2026-11-06
+
+**HTTPS certificate as a .pfx file**
+- Setup and ClearScreen Admin (Settings → Replace certificate…) accept a .pfx / .p12 file
+  (certificate and private key in one) as well as two PEM files. The password is typed at a hidden
+  prompt, passed to the helper over stdin, never stored and never put on a command line; a wrong
+  password can be typed again.
+- The .pfx is unpacked to PEM (what the HTTPS service reads) and checked exactly like PEM files — key
+  belongs to the certificate, covers the domain, not expired — before anything is replaced. Tested with
+  .pfx files from Windows' own export and from OpenSSL (modern and legacy encryption).
+- New dependency: `cryptography` 50.0.2 (with `cffi`, `pycparser`), pinned by SHA-256 in the lock file.
+
+**Fixed**
+- Setup would have stopped at step 12 whenever HTTPS was set up: Caddy's normal progress messages on
+  stderr were treated as an error by Windows PowerShell. Only Caddy's exit code decides now.
+
 ## 1.2.2 — 2026-11-06
 
 - Fixed: setup stopped at step 12 (*Settings*) with "argument --email: expected one argument" when

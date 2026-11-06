@@ -38,7 +38,7 @@ Work through this checklist first. Setup asks for the items marked ✱.
 | ☐ | **No restart pending** | If Windows Update is waiting for a restart, restart the server first — SQL Server setup refuses to run otherwise. |
 | ☐ | **SQL Server** — nothing to prepare | Setup offers to install **SQL Server 2022 Developer** (free) when the server has none. You only have to accept Microsoft's license terms. Already have SQL Server? Setup uses it. ✱ |
 | ☐ | **Cloudflare set up for the domain** | `api.clearscreen.example`: an **A record** to the server's Elastic IP, **Proxied** (orange cloud); **SSL/TLS → Overview → Full (strict)**. ✱ |
-| ☐ | **The Cloudflare Origin Certificate and its private key** | Two PEM files (Cloudflare → SSL/TLS → Origin Server). Copy both to the server, e.g. to `C:\Install\cert\`. Setup asks for their paths and keeps its own protected copy. ✱ |
+| ☐ | **The HTTPS certificate and its private key** | Either a **.pfx** file and its password (certificate and key in one), or two **PEM** files (Cloudflare → SSL/TLS → Origin Server). Copy them to the server, e.g. to `D:\Install\cert\`. Setup asks for the path (and the .pfx password, hidden) and keeps its own protected copy. ✱ |
 | ☐ | **A Groq API key** | From console.groq.com → API Keys. A paid plan is needed for production volume. ✱ |
 | ☐ | **Internet access from the server** | To download SQL Server, SSMS, Python, the ODBC driver, the embedding service and Caddy. |
 
@@ -56,7 +56,7 @@ only from Cloudflare means nobody can go around Cloudflare to the server.
 
 ## 3. Install
 
-1. **Copy the ClearScreen folder to the server**, for example to `C:\Install\ClearScreen`.
+1. **Copy the ClearScreen folder to the server**, for example to `D:\Install\ClearScreen`.
 2. **Double-click `Setup.cmd`.** Windows asks for administrator rights — click **Yes**.
 3. **Answer the questions.** Press Enter to accept the value in brackets.
 
@@ -66,10 +66,14 @@ only from Cloudflare means nobody can go around Cloudflare to the server.
    SQL Server is not installed on this server.
    Install SQL Server 2022 Developer now? Free; for development, testing and demos only [Y/n]:
    Public domain name for HTTPS [api.clearscreen.example]:
-   The HTTPS certificate for api.clearscreen.example and its private key: two PEM files (e.g. from Cloudflare).
-   Path of the certificate file: C:\Install\cert\origin-cert.pem
-   Path of the private key file: C:\Install\cert\origin-key.pem
+   The HTTPS certificate for api.clearscreen.example: a .pfx file (certificate and private key in one, with a
+   password), or two PEM files (the certificate, then its private key).
+   Path of the certificate file (.pfx or PEM): D:\Install\cert\clearscreen.pfx
+   Password of the .pfx file (input is hidden):
    ```
+
+   With PEM files, setup asks for the private key file instead of a password. Nothing appears while
+   you type the password; a wrong one can be typed again.
 
    Tip: in File Explorer, **Shift + right-click** a file → **Copy as path**, then right-click in the
    setup window to paste. Quotes around the path are fine.
@@ -91,7 +95,7 @@ only from Cloudflare means nobody can go around Cloudflare to the server.
                                            SQL Server program: D:\ClearScreen\SQLServer   databases: D:\ClearScreen\SQLData ...
    [3] SQL Server Management Studio 22     SQL Server Management Studio installed (D:\ClearScreen\SSMS\...)
    [5] Python 3.13.9                       Python at D:\ClearScreen\Program\python
-   [6] ClearScreen application files and packages   application 1.2.2 installed, packages verified
+   [6] ClearScreen application files and packages   application 1.3.0 installed, packages verified
    [7] Microsoft ODBC Driver 18 for SQL Server       installed
    [8] Embedding service (Ollama 0.40.14, CPU only)  ready
    [9] HTTPS front door (Caddy 2.11.7)               ready
@@ -103,7 +107,7 @@ only from Cloudflare means nobody can go around Cloudflare to the server.
    [16] Starting the services               downloading the embedding model bge-m3 (about 1.2 GB) ...
    [18] Health check                        status: ok  (database: ok, embedding service: ok, Groq key: configured)
 
-     ClearScreen 1.2.2 is installed.
+     ClearScreen 1.3.0 is installed.
    ```
 
 If anything fails, setup stops with a red message and the full log path
@@ -114,7 +118,7 @@ it continues where it left off.
 
 ## 4. After installing
 
-1. **Delete the copies of the private key** you used (e.g. `C:\Install\cert\`). ClearScreen keeps
+1. **Delete the copies of the certificate files** you used — the .pfx, or the private key (e.g. `D:\Install\cert\`). ClearScreen keeps
    its own copy in `D:\ClearScreen\Data\config\tls`, readable only by administrators and the
    HTTPS service.
 2. **Install SQL Server's security updates:** **Settings → Windows Update → Check for updates**,
@@ -161,11 +165,11 @@ control, other accounts (including the services) can only read and run programs.
 |---|---|---|
 | DNS record | Cloudflare → DNS | `A` `clearscreen-api` → the Elastic IP, **Proxied** |
 | Encryption mode | Cloudflare → SSL/TLS → Overview | **Full (strict)** |
-| Origin certificate | Cloudflare → SSL/TLS → Origin Server | Covers `*.clearscreen.example`; PEM; installed on the server |
+| Origin certificate | Cloudflare → SSL/TLS → Origin Server | Covers `api.clearscreen.example`; .pfx or PEM; installed on the server |
 | Server firewall | AWS security group | 443 from Cloudflare's IP ranges only |
 
 **Replacing the certificate** (before it expires, or if the key may have leaked): create a new one in
-Cloudflare, copy both PEM files to the server, then **ClearScreen Admin → Settings → Replace
+Cloudflare, copy the .pfx (or both PEM files) to the server, then **ClearScreen Admin → Settings → Replace
 certificate…**. The app checks them, installs them and restarts the HTTPS service. The Settings tab
 and the health check always show the certificate's expiry date.
 
@@ -276,7 +280,8 @@ keys. It **never** removes SQL Server or SSMS, or deletes the ClearScreen databa
 | *That key did not work* | The Groq key is wrong or expired. Paste it again or press Enter to skip. |
 | *The embedding service did not start* | See `D:\ClearScreen\Data\logs\ClearScreenEmbed.err.log`. Usually port 11434 is already used — rerun setup with `-EmbedPort 11435`. |
 | *The API did not start* | See `D:\ClearScreen\Data\logs\ClearScreenApi.err.log`. Usually port 8000 is already used — rerun setup with `-ApiPort 8100`. |
-| *The HTTPS certificate was not accepted: …* | The message says why: wrong file (certificate and key swapped, or not PEM), a key that does not belong to the certificate, a certificate that does not cover the domain, or one that expired. Download the PEM files again from Cloudflare. |
+| *The HTTPS certificate was not accepted: …* | The message says why: wrong file (certificate and key swapped, or not PEM), a key that does not belong to the certificate, a certificate that does not cover the domain, or one that expired. Ask IT for the right files. |
+| *The .pfx file could not be opened: the password is wrong …* | Type the password again (setup asks). Check Caps Lock and the keyboard layout; spaces count. Press Enter to stop and ask IT to confirm the password. |
 | Cloudflare error **521** or **522** | Cloudflare cannot reach the server: `ClearScreenHttps` is stopped, or the AWS security group does not allow 443 from Cloudflare. |
 | Cloudflare error **525** or **526** | The HTTPS handshake failed: the encryption mode must be **Full (strict)** and the installed certificate must be the Cloudflare origin certificate for this domain (**Admin → Settings**). |
 | Cloudflare error **524** | The request took longer than 100 seconds — send fewer alerts per request. |
@@ -287,12 +292,14 @@ keys. It **never** removes SQL Server or SSMS, or deletes the ClearScreen databa
 ```powershell
 powershell -ExecutionPolicy Bypass -File installer\Install-ClearScreen.ps1 `
     -SqlServer "SQLHOST\INSTANCE" -Database ClearScreen -Domain api.clearscreen.example `
-    -TlsCertFile C:\Install\cert\origin-cert.pem -TlsKeyFile C:\Install\cert\origin-key.pem -ApiPort 8000 -EmbedPort 11434
+    -TlsCertFile D:\Install\cert\origin-cert.pem -TlsKeyFile D:\Install\cert\origin-key.pem -ApiPort 8000 -EmbedPort 11434
 ```
 
 `-Unattended` runs without questions (set the Groq key afterwards in the Admin app).
 `-SkipHttps` leaves out the HTTPS service, for servers behind another proxy or load balancer.
 `-LetsEncrypt` (with `-AcmeEmail`) uses an automatic Let's Encrypt certificate instead of certificate files.
 `-InstallDrive E:` installs to another drive instead of D: (first install only). `-NoSsms` skips SSMS.
+`-TlsPfxFile <path>` uses a .pfx instead of `-TlsCertFile`/`-TlsKeyFile`; its password is always asked
+for (hidden), so a .pfx cannot be used with `-Unattended`.
 `-InstallSqlServer -AcceptSqlServerLicense` installs SQL Server 2022 Developer without asking (with
 `-Unattended`, both are needed); `-NoSqlServerInstall` never offers it.
