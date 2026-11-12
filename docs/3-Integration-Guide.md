@@ -10,11 +10,11 @@
 - **Every request** carries your API key in the header `X-API-Key`.
 - **Every request and record** carries your `ClientID`. It must be the client your key belongs to.
 - **Send whitelisted alerts** (with the analyst's reason) to `POST /whitelist/add`.
-- **Send new alerts** to `POST /match/groq`. Each comes back **CLEAR**, **REVIEW** or **FLAG**, with the reasons.
+- **Send new alerts** to `POST /match/main`. Each comes back **CLEAR**, **REVIEW** or **FLAG**, with the reasons.
 - All bodies are JSON (`Content-Type: application/json`). Send one object or a list.
 
 ```bash
-curl -X POST https://api.clearscreen.example/match/groq \
+curl -X POST https://api.clearscreen.example/match/main \
   -H "X-API-Key: $CLS_API_KEY" -H "Content-Type: application/json" \
   -d @alert.json
 ```
@@ -43,7 +43,7 @@ Your ClearScreen administrator creates your client and gives you a key that star
 2. **No listing details** — LexisNexis gave "Entity Details NOT AVAILABLE" and it is not an exact repeat → **REVIEW**.
 3. **Match score** below 0.80 — the customer and the listed party clearly differ → **CLEAR**.
 4. **Similar whitelisted record** — none of your whitelist is similar enough → **REVIEW**.
-5. **AI review** — for up to 5 similar records, the AI (Groq) checks whether the analyst's reason
+5. **AI review** — for up to 5 similar records, the AI checks whether the analyst's reason
    still holds for this alert; Python checks every fact it states. → **CLEAR**, **REVIEW** or **FLAG**.
 
 ### What to do with each result
@@ -114,7 +114,7 @@ Example:
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/match/groq` | Check one alert or a list (up to 500) |
+| `POST` | `/match/main` | Check one alert or a list (up to 500) |
 | `POST` | `/whitelist/add` | Add or replace whitelist records (one or a list, up to 50,000) |
 | `GET` | `/whitelist/{ClientID}/{Unique_ID}` | Read one of your whitelist records |
 | `GET` | `/search?q=...&k=10` | Your whitelist records whose listing is most similar to some text |
@@ -125,12 +125,12 @@ your key, then **Try it out** on any endpoint.
 
 _(Screenshot not included in the public repository: Interactive documentation.)_
 
-### POST /match/groq
+### POST /match/main
 
 Send one alert object, or a list of them. The response is **always a list**, one result per alert,
-in the same order.
+in the same order. Each result is the decision on that alert:
 
-_(Screenshot not included in the public repository: Trying /match/groq in the documentation page.)_
+_(Screenshot not included in the public repository: Trying /match/main in the documentation page.)_
 
 **Response fields**
 
@@ -145,10 +145,27 @@ _(Screenshot not included in the public repository: Trying /match/groq in the do
 | `repeat_of` | Whitelist `Unique_ID`s this alert exactly repeats |
 | `precedent` | The whitelist `Unique_ID` the decision relied on |
 | `precedent_reasoning` | That record's `Analyst_Allow_Reasoning` |
-| `ai_calls`, `seconds`, `ai_seconds`, `waited_seconds`, `cost_usd` | How long it took, and the AI cost at Groq's paid rates |
-| `similar` | The similar-case search: records sent to the AI, near misses, `pending_embeddings` |
-| `ai_review` | For each record the AI reviewed: its decision, the reasons it checked, its reasoning, and any corrections Python made |
-| `comparison_trace` | The field-by-field match score |
+
+Example result (an AI review that found an earlier analyst decision still applies):
+
+```json
+[{
+  "ClientID": "001",
+  "Unique_ID": "DEMO-E-05",
+  "disposition": "CLEAR",
+  "confidence": 0.9,
+  "rule": "prior_adjudication_applicable",
+  "explanation": "Score 1.05 is at or above 0.80. The reasoning that whitelisted record 35102 still applies: The prior clearance relied on a location mismatch, and that same Stamford, Connecticut versus Charleston, West Virginia mismatch remains. ...",
+  "score": 1.05,
+  "repeat_of": [],
+  "precedent": "35102",
+  "precedent_reasoning": "DIFFERENT LOCATION. GIVEN THE INFORMATION PROVIDED, IT IS UNLIKELY THIS IS A POSITIVE MATCH."
+}]
+```
+
+**Auto-closing.** Close an alert automatically only when `disposition` is `CLEAR`; send `REVIEW` and
+`FLAG` to an analyst. If your policy is stricter, also require a minimum `confidence`, or accept only
+some `rule` values.
 
 _(Screenshot not included in the public repository: A live result.)_
 
@@ -178,7 +195,7 @@ Returns the stored record, plus `CreatedUtc` and `UpdatedUtc`.
 ### GET /health
 
 Without a key: `status` (`ok` or `degraded`) and the state of the database, embedding service and
-Groq key. With your key, also `client.whitelist_records` and `client.pending_embeddings`.
+AI service (`ai_service`). With your key, also `client.whitelist_records` and `client.pending_embeddings`.
 
 ---
 
@@ -200,8 +217,8 @@ Every error has the same shape — act on `error_code`, show or log `message`:
 | 413 | `BATCH_TOO_LARGE`, `REQUEST_TOO_LARGE` | Too many items, or the body is over the size limit | Split into smaller requests |
 | 422 | `INVALID_REQUEST` | A field is missing or malformed; `errors` lists them | Fix the data |
 | 429 | `RATE_LIMITED` | Too many requests per minute | Wait for `Retry-After` seconds, then retry |
-| 429 | `GROQ_LIMIT_REACHED` | The AI provider's limit is used up | `completed` holds the results finished before the limit; resend the `not_run` alerts later |
-| 503 | `DATABASE_UNAVAILABLE`, `DATABASE_NOT_CONFIGURED`, `GROQ_NOT_CONFIGURED` | A part of the service is down or not set up | Retry later; tell the administrator if it persists |
+| 429 | `AI_LIMIT_REACHED` | The AI review's usage limit is used up for now | `completed` holds the results finished before the limit; resend the `not_run` alerts later |
+| 503 | `DATABASE_UNAVAILABLE`, `DATABASE_NOT_CONFIGURED`, `AI_NOT_CONFIGURED` | A part of the service is down or not set up | Retry later; tell the administrator if it persists |
 | 500 | `INTERNAL_ERROR` | Unexpected error; the message has a reference number | Retry once; send the reference to the administrator |
 | 524 | *(an HTML page from Cloudflare, not JSON)* | The request took longer than 100 seconds, so Cloudflare ended it | Send fewer alerts per request (1–5). The alerts that finished are not returned — send them again |
 | 502, 521, 522 | *(Cloudflare page)* | Cloudflare cannot reach ClearScreen right now | Retry later; tell the administrator if it persists |
@@ -218,10 +235,10 @@ _(Screenshot not included in the public repository: Error documentation example.
 | Item | Limit or typical value |
 |---|---|
 | Alerts decided without the AI | well under a second each |
-| Alerts reviewed by the AI | a few seconds per similar record (up to 5 per alert); more if Groq's rate limit makes ClearScreen wait |
+| Alerts reviewed by the AI | a few seconds per similar record (up to 5 per alert); more when the AI service is busy |
 | **Longest a request may take** | **100 seconds** — Cloudflare, in front of ClearScreen, ends longer requests (error 524) |
 | Client timeout | 120 seconds |
-| Alerts per `/match/groq` request | **send 1–5** so each request finishes within 100 seconds (up to 500 are accepted, but a large batch needing the AI would be cut off by Cloudflare) |
+| Alerts per `/match/main` request | **send 1–5** so each request finishes within 100 seconds (up to 500 are accepted, but a large batch needing the AI would be cut off by Cloudflare) |
 | Records per `/whitelist/add` request | up to 50,000 (5,000 per request is a good size) |
 | Request size | 100 MB |
 | Requests per minute | 120 per client (ask the administrator to raise it) |
@@ -241,7 +258,7 @@ All examples read the key from the environment variable `CLS_API_KEY`.
 ### curl
 
 ```bash
-curl -s -X POST https://api.clearscreen.example/match/groq \
+curl -s -X POST https://api.clearscreen.example/match/main \
   -H "X-API-Key: $CLS_API_KEY" -H "Content-Type: application/json" \
   -d '{"ClientID":"ACME","Unique_ID":"ALERT-1","Screened_Fields":"Beneficiary Name,Beneficiary Country",
        "Screened_Values":"ACME TRADING LTD,Canada","Database_Screened":"OFAC SDN.BDF",
@@ -259,7 +276,7 @@ $alert = @{
     Matched_Details = "Entity   Name: ACME TRADING LIMITED ..."
 }
 $body = [Text.Encoding]::UTF8.GetBytes(($alert | ConvertTo-Json))
-$result = Invoke-RestMethod -Method Post -Uri "https://api.clearscreen.example/match/groq" `
+$result = Invoke-RestMethod -Method Post -Uri "https://api.clearscreen.example/match/main" `
     -Headers $headers -ContentType "application/json; charset=utf-8" -Body $body -TimeoutSec 120
 $result | ForEach-Object { "{0}: {1} ({2})" -f $_.Unique_ID, $_.disposition, $_.rule }
 ```
@@ -281,7 +298,7 @@ var alerts = new[] { new {
     Database_Screened = "OFAC SDN.BDF", Screened_Date = "11/04/2026",
     Matched_Details = "Entity   Name: ACME TRADING LIMITED ..." } };
 
-var response = await http.PostAsJsonAsync("/match/groq", alerts);
+var response = await http.PostAsJsonAsync("/match/main", alerts);
 if (!response.IsSuccessStatusCode) {
     var error = await response.Content.ReadFromJsonAsync<Dictionary<string, object>>();
     throw new Exception($"{(int)response.StatusCode} {error?["error_code"]}: {error?["message"]}");
@@ -304,7 +321,7 @@ alert = {"ClientID": "ACME", "Unique_ID": "ALERT-1",
          "Database_Screened": "OFAC SDN.BDF", "Screened_Date": "11/04/2026",
          "Matched_Details": "Entity   Name: ACME TRADING LIMITED ..."}
 
-r = api.post("/match/groq", json=[alert])
+r = api.post("/match/main", json=[alert])
 if r.status_code != 200:
     err = r.json()
     raise RuntimeError(f"{r.status_code} {err['error_code']}: {err['message']}")
@@ -315,7 +332,7 @@ for result in r.json():
 ### JavaScript (Node 18+)
 
 ```javascript
-const res = await fetch("https://api.clearscreen.example/match/groq", {
+const res = await fetch("https://api.clearscreen.example/match/main", {
   method: "POST",
   headers: { "X-API-Key": process.env.CLS_API_KEY, "Content-Type": "application/json" },
   body: JSON.stringify([{
@@ -359,10 +376,12 @@ Each client gets its own key.
 
 **Why did an alert that "obviously" matches a whitelisted one come back REVIEW?** Either the record
 was added very recently and is not embedded yet (see `pending_embeddings`), or the AI could not
-confirm the analyst's reason with the data in the alert. The `ai_review` field shows exactly why.
+confirm the analyst's reason with the data in the alert. The `explanation` says which.
 
 **What does ClearScreen store?** Only the whitelist records you send to `/whitelist/add`. Alerts sent
-to `/match/groq` are not stored; the access log records only who called, when, and the result code.
+to `/match/main` are not stored; the access log records only who called, when, and the result code.
 
-**Is the data sent to Groq?** For alerts that reach the AI review step, the alert and the similar
-whitelist records (including `Analyst_Allow_Reasoning`) are sent to Groq Cloud over HTTPS.
+**Is our data sent outside ClearScreen?** For alerts that reach the AI review step (step 5), the
+alert and the similar whitelist records (including `Analyst_Allow_Reasoning`) are sent over encrypted
+HTTPS to an external AI service for the review. Alerts decided in steps 1–4 are not sent anywhere.
+Your ClearScreen administrator can tell you more about the AI service and its data terms.

@@ -95,7 +95,7 @@ only from Cloudflare means nobody can go around Cloudflare to the server.
                                            SQL Server program: D:\ClearScreen\SQLServer   databases: D:\ClearScreen\SQLData ...
    [3] SQL Server Management Studio 22     SQL Server Management Studio installed (D:\ClearScreen\SSMS\...)
    [5] Python 3.13.9                       Python at D:\ClearScreen\Program\python
-   [6] ClearScreen application files and packages   application 1.3.0 installed, packages verified
+   [6] ClearScreen application files and packages   application 1.4.0 installed, packages verified
    [7] Microsoft ODBC Driver 18 for SQL Server       installed
    [8] Embedding service (Ollama 0.40.14, CPU only)  ready
    [9] HTTPS front door (Caddy 2.11.7)               ready
@@ -107,7 +107,7 @@ only from Cloudflare means nobody can go around Cloudflare to the server.
    [16] Starting the services               downloading the embedding model bge-m3 (about 1.2 GB) ...
    [18] Health check                        status: ok  (database: ok, embedding service: ok, Groq key: configured)
 
-     ClearScreen 1.3.0 is installed.
+     ClearScreen 1.4.0 is installed.
    ```
 
 If anything fails, setup stops with a red message and the full log path
@@ -175,7 +175,7 @@ and the health check always show the certificate's expiry date.
 
 > **Cloudflare's 100-second limit.** Cloudflare ends any request the server takes longer than 100
 > seconds to answer (the client sees error **524**). Alerts that need the AI review take several
-> seconds each, so client applications should send **1–5 alerts per `/match/groq` request**. See the
+> seconds each, so client applications should send **1–5 alerts per `/match/main` request**. See the
 > Integration Guide, *Timing, batching and limits*.
 
 **Using Let's Encrypt instead** (no Cloudflare): run setup with `-LetsEncrypt`, point the DNS record

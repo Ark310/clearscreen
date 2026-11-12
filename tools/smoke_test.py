@@ -20,6 +20,9 @@ FIELDS = "Beneficiary Name,Beneficiary Date of Birth,Beneficiary Country,Benefic
 SEP = "-" * 50
 
 
+MAIN_FIELDS = {"ClientID", "Unique_ID", "disposition", "confidence", "rule", "explanation", "score",
+               "repeat_of", "precedent", "precedent_reasoning"}
+
 def listing(city, country, dob, nationality):
     return (f"Entity   Name: JANE Q DOE   Reference No.:58219   Reason: OFAC SDN   Notes:Program: SDGT   "
             f"Address Information    {SEP}    Address Type: Unknown   City: {city}   Country: {country}   "
@@ -80,25 +83,27 @@ def main():
     ]
     for name, body, want, rule in cases:
         started = time.time()
-        r = http.post("/match/groq", json=body)
+        r = http.post("/match/main", json=body)
         if r.status_code != 200:
             check(name, False, f"HTTP {r.status_code} {r.text[:200]}")
             continue
         x = r.json()[0]
         ok = x["disposition"] in want and (rule is None or x["rule"] == rule)
-        check(name, ok, f"{x['disposition']} ({x['rule']}) in {time.time() - started:.1f}s - AI calls {x['ai_calls']}, "
-                        f"AI {x['ai_seconds']}s, rate-limit wait {x['waited_seconds']}s, cost ${x['cost_usd']:.4f}")
+        check(name, ok, f"{x['disposition']} ({x['rule']}) in {time.time() - started:.1f}s")
+        check(f"  ...decision fields only, no AI provider named", set(x) == MAIN_FIELDS and "groq" not in r.text.lower())
 
     print("4. Security and errors")
-    r = http.post("/match/groq", json=alert | {"ClientID": "SOMEONE-ELSE"})
+    r = http.post("/match/test", json=alert | {"Unique_ID": "SMOKE-T1"})
+    print(f"   /match/test is {'ON (turn it off when done testing)' if r.status_code == 200 else 'off (hidden)'}")
+    r = http.post("/match/main", json=alert | {"ClientID": "SOMEONE-ELSE"})
     check("another client's ID refused", r.status_code == 403 and r.json()["error_code"] == "CLIENT_MISMATCH")
-    r = http.post("/match/groq", json={k: v for k, v in alert.items() if k != "ClientID"})
+    r = http.post("/match/main", json={k: v for k, v in alert.items() if k != "ClientID"})
     check("missing ClientID refused", r.status_code == 400 and r.json()["error_code"] == "MISSING_CLIENT_ID")
     r = httpx.get(a.base_url.rstrip("/") + f"/whitelist/{cid}/SMOKE-WL-1", headers={"X-API-Key": "cls_wrong"},
                   verify=not a.insecure)
     check("wrong key refused", r.status_code == 401 and r.json()["error_code"] == "INVALID_API_KEY")
     if a.other_key_env and os.environ.get(a.other_key_env):
-        r = httpx.post(a.base_url.rstrip("/") + "/match/groq", json=alert | {"Unique_ID": "SMOKE-A4"},
+        r = httpx.post(a.base_url.rstrip("/") + "/match/main", json=alert | {"Unique_ID": "SMOKE-A4"},
                        headers={"X-API-Key": os.environ[a.other_key_env]}, timeout=120, verify=not a.insecure)
         check("another client's key cannot use this client's records", r.status_code == 403)
 

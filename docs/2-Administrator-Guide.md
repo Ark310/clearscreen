@@ -14,7 +14,7 @@ keeping it healthy, taking backups.
 The app works **only on the server itself**. Nobody can reach it over the internet; managing
 ClearScreen always means signing in to the server.
 
-The app has five tabs: **Dashboard**, **Clients**, **Settings**, **Data** and **Logs**.
+The app has six tabs: **Dashboard**, **Clients**, **Settings**, **Data**, **Embedding** and **Logs**.
 
 ---
 
@@ -105,6 +105,21 @@ may have leaked):
 
 **Save and restart services** applies the changes. Callers get errors for the few seconds the
 services restart, so do this outside busy hours.
+
+### Test endpoint
+
+ClearScreen has two ways to check alerts:
+
+| Endpoint | Who it is for | What it returns |
+|---|---|---|
+| `POST /match/main` | Clients — always on | The decision only: `ClientID`, `Unique_ID`, `disposition`, `confidence`, `rule`, `explanation`, `score`, `repeat_of`, `precedent`, `precedent_reasoning` |
+| `POST /match/test` | You, for testing — **off** unless you turn it on | The same decision plus every internal detail: the AI provider and model (Groq), AI calls, timings, cost, the similar records found, each AI review and the score trace |
+
+**Turn on** / **Turn off** switches `/match/test`. While it is on, it is listed on the `/docs` page and
+any client's key can call it; while it is off, it is hidden from `/docs` and answers `404 NOT_FOUND`,
+as if it did not exist. The switch takes effect within 10 seconds, without a restart. Turn it on only
+while you test, then off again: it shows clients internal details, including which AI provider is used.
+Both endpoints make exactly the same decisions.
 
 ---
 
@@ -223,7 +238,35 @@ tick **Trust server certificate**, **Connect**.
 
 ---
 
-## 6. Logs
+## 6. Embedding queue
+
+_(Screenshot not included in the public repository: Embedding.)_
+
+New and replaced whitelist records are **embedded** in the background before the similar-case search
+(and so the AI review) can use them; the exact-repeat check uses them at once. This tab shows that
+queue and lets you pause it.
+
+- **Queue status** at the top: *Running*, *Paused*, *Idle - nothing waiting* or *Problem - retrying*
+  (the message says what; see the **API** log).
+- **One row per client** with records waiting: how many, how many were embedded so far in this run,
+  the **time taken**, an **estimated time left**, and since when records have been waiting. A client
+  whose queue finished shows its last run (records and time). The estimate uses the client's own pace
+  in this run, measured per listing size, so it settles after the first few minutes; long listings
+  (for example WorldCompliance profiles) take several times longer than short ones.
+- **Select a client** to see its waiting records (`Unique_ID`, when added or replaced, listing size) in
+  the order they will be embedded — the first 1,000.
+- **Pause** stops the queue after the current small batch (a few seconds). It stays paused — also
+  after a restart of the server — until you click **Resume**. Use it, for example, to give a demo
+  full speed, or while a big load would otherwise slow the server.
+- The tab refreshes every 15 seconds while it is open; **Refresh** reads it at once.
+
+Clients are worked through **oldest first**, a hundred records at a time. **Alerts always go first:**
+while an alert is being checked, the queue waits, so a big load no longer slows down the answers to
+alerts. Records waiting are not lost by pausing or restarting.
+
+---
+
+## 7. Logs
 
 _(Screenshot not included in the public repository: Logs.)_
 
@@ -243,7 +286,7 @@ Logs roll over at 10 MB and the last 10 files are kept.
 
 ---
 
-## 7. Routine tasks
+## 8. Routine tasks
 
 | When | Task |
 |---|---|
@@ -256,7 +299,7 @@ Logs roll over at 10 MB and the last 10 files are kept.
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | A client reports... | Likely cause | What to do |
 |---|---|---|
@@ -264,11 +307,12 @@ Logs roll over at 10 MB and the last 10 files are kept.
 | `CLIENT_DISABLED` | The client is disabled | **Clients** → **Enable / disable** |
 | `CLIENT_MISMATCH` | Their `ClientID` differs from the one registered for their key | Agree the Client ID; it must match exactly (case does not matter) |
 | `RATE_LIMITED` | More than the per-minute limit | Raise the limit in **Settings**, or ask them to send batches |
-| `GROQ_LIMIT_REACHED` | Groq's plan limit is used up | Upgrade the Groq plan, or wait for the limit to reset |
-| `GROQ_NOT_CONFIGURED` | No Groq key | **Settings** → **Set / replace key…** |
+| `AI_LIMIT_REACHED` | Groq's plan limit is used up | Upgrade the Groq plan, or wait for the limit to reset |
+| `AI_NOT_CONFIGURED` | No Groq key | **Settings** → **Set / replace key…** |
 | `DATABASE_UNAVAILABLE` | SQL Server is down or the connection changed | **Settings** → **Test connection**; check the SQL Server service |
 | `INTERNAL_ERROR` with a reference | An unexpected error | Find the reference in the **API** log and send that log section to support |
-| Many alerts go to `REVIEW` after a big load | New records are not embedded yet | Wait; the health check shows records still pending |
+| Many alerts go to `REVIEW` after a big load | New records are not embedded yet | **Embedding** tab: records waiting and time left. Is the queue paused? |
+| `404 NOT_FOUND` on `/match/test` | The test endpoint is switched off | Clients use `/match/main`. To test, **Settings** → **Test endpoint** → **Turn on** |
 | Cannot reach the API at all, or Cloudflare error 521 / 522 | A service is stopped, or the Cloudflare DNS record / AWS security group changed | **Dashboard** → **Restart all**; check the HTTPS log |
 | Cloudflare error 525 / 526 | Certificate problem | **Settings** → check the certificate line; replace it if expired or wrong |
 | Cloudflare error 524 | A request took over 100 seconds | Ask the client to send 1–5 alerts per request |

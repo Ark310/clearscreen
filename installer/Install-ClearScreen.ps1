@@ -758,8 +758,8 @@ try {
 
     Step 18 "Health check"
     $h = Invoke-RestMethod "http://127.0.0.1:$ApiPort/health"
-    Info ("status: {0}  (database: {1}, embedding service: {2}, Groq key: {3})" -f $h.status, $h.components.database,
-          $h.components.embedding_service, $h.components.groq_key)
+    Info ("status: {0}  (database: {1}, embedding service: {2}, AI service (Groq key): {3})" -f $h.status,
+          $h.components.database, $h.components.embedding_service, $h.components.ai_service)
 
     Write-Host ""
     Write-Host "  ClearScreen $Version is installed." -ForegroundColor Green

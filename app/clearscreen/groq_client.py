@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Groq Cloud as the AI review's model (POST /match/groq): qwen/qwen3.8-27b, reasoning high,
+"""Groq Cloud as the AI review's model (POST /match/main and /match/test): qwen/qwen3.8-27b, reasoning high,
 strict JSON schema. Returns (answer JSON, info) like app/ai_review.ollama_chat.
 
 Limits: a short per-minute limit (Groq asks to retry within a minute) is waited out; a longer
 one - the free tier's daily allowance - raises GroqLimitReached and the request fails with
-GROQ_LIMIT_REACHED. There is no fallback to the local model.
+AI_LIMIT_REACHED (clients are never told the provider's name). There is no fallback to the local model.
 
 The API key comes from the encrypted secrets store (clearscreen/config.py). It is never
 logged or returned.

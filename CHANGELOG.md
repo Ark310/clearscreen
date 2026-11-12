@@ -1,5 +1,38 @@
 # ClearScreen — changes
 
+## 1.4.0 — 2026-11-12
+
+**Two match endpoints: `/match/main` for clients, `/match/test` for you**
+- `POST /match/groq` is renamed **`POST /match/test`**. It returns everything it returned before, and
+  is **off by default**: switched on and off in Admin → Settings → *Test endpoint* (no restart). While
+  off it is hidden from the `/docs` page and answers `404`, as if it did not exist.
+- New **`POST /match/main`** for clients: the same checks and the same decisions, but each result
+  holds only `ClientID`, `Unique_ID`, `disposition`, `confidence`, `rule`, `explanation`, `score`,
+  `repeat_of`, `precedent` and `precedent_reasoning`.
+- **Nothing client-facing names the AI provider.** Error codes `GROQ_LIMIT_REACHED` and
+  `GROQ_NOT_CONFIGURED` are now `AI_LIMIT_REACHED` and `AI_NOT_CONFIGURED` (with neutral messages;
+  Groq's own message only on `/match/test`); `/health` reports `ai_service` instead of `groq_key`; the
+  `/docs` page and the Integration Guide no longer mention it. A test checks every client-facing
+  response, error and the published API description for it.
+
+**Embedding queue (Admin → Embedding, new tab)**
+- Records waiting per client, records embedded and time taken in the current run, estimated time
+  left, and each client's waiting records (`Unique_ID`, when added, listing size).
+- **Pause / Resume.** A pause takes effect after the current small batch and lasts, also across
+  restarts, until resumed.
+- The queue works one client at a time, oldest first, 100 records per step — the waiting count now
+  moves steadily instead of in jumps of 500.
+
+**Faster answers while records are being embedded**
+- **Alerts go first:** while an alert is in its similar-case search, the background embedding waits
+  (it sends 16 text pieces at a time instead of 64, so an alert waits at most for one small batch).
+- The in-memory search index of a client is **extended** with newly embedded records instead of being
+  re-read in full from SQL Server for every alert while a queue is running.
+- Decisions are unchanged: both are about when work happens, not what is decided.
+
+**Upgrade:** run the new Setup.cmd (keeps settings, clients, keys and data). Client applications
+must change `/match/groq` to `/match/main` (and the two renamed error codes).
+
 ## 1.3.0 — 2026-11-06
 
 **HTTPS certificate as a .pfx file**

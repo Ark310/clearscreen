@@ -32,7 +32,10 @@ automatic start (delayed), restart on failure (10 s / 30 s / 60 s), logs rolled 
 ```text
 app/
   clearscreen/
-    api.py            HTTP API: routes, auth, rate limit, error handling, background embedding worker
+    api.py            HTTP API: routes (/match/main, the switchable /match/test), auth, rate limit,
+                      error handling, the published API description
+    embedding_queue.py the background embedding worker (pause, alerts first, progress per client)
+                      and the queue queries the Admin app's Embedding tab uses
     matching.py       the decision flow for one alert (steps 1-5)
     similarity.py     similar-case search: chunking, embeddings, scoring, the embedding cache
     ai_review.py      the AI review prompt, its JSON schema, and Python's fact checks
@@ -85,7 +88,16 @@ tools/                smoke_test.py, make_lock.py
    confidence); all NOT_APPLICABLE → FLAG; else REVIEW.
 
 `groq_client.GroqLimitReached` (a daily limit, or a per-minute limit that does not clear in 60 s)
-propagates out of `match_alert` so the API answers `429 GROQ_LIMIT_REACHED` with the completed results.
+propagates out of `match_alert` so the API answers `429 AI_LIMIT_REACHED` with the completed results
+(on `/match/test` also `detail`, Groq's own message).
+
+**Two endpoints, one flow.** `/match/main` and `/match/test` both call `api._match`, so they decide
+identically. `/match/main` returns `models.MatchDecision` (`MAIN_FIELDS`); `/match/test` returns
+`models.MatchResult` with every internal field. `/match/test` exists only while
+`settings.test_endpoint_enabled` is true: otherwise a route dependency answers 404 before the key or
+body are read, and `api._openapi` leaves it (and its models) out of `/openapi.json`. Nothing
+client-facing names the AI provider: error codes are `AI_LIMIT_REACHED` / `AI_NOT_CONFIGURED`,
+`/health` reports `ai_service`; `tests/test_v14.py` checks every client-facing response for it.
 
 ---
 
@@ -104,6 +116,15 @@ dbo.WL_Payload_Chunks (RecordKey, Model, ChunkNo, ChunkHash)   -- FK RecordKey O
 dbo.CLS_SchemaVersion (Version, AppliedUtc)
 ```
 
+- **The queue** (`embedding_queue.EmbeddingWorker`, a thread in the API service): the client with the
+  oldest waiting record first, 100 records per step, 16 chunks per call to the embedding service.
+  Before each call it waits while an alert is in its similar-case search (`similarity.ALERTS_FIRST`)
+  and stops if `settings.embedding_paused` is set. Progress per client (records, seconds, pace per
+  1,000 listing characters) goes to `logs\embedding_status.json` — the logs folder is the only one the
+  API service may write — and the Admin app adds the waiting counts from SQL Server.
+- **The in-memory index** of a client's vectors is extended, not rebuilt, when records were only
+  added since it was built: a `CHECKSUM_AGG` over the kept part proves it unchanged, then only the new
+  chunks and vectors are read. A replaced or removed record rebuilds it.
 - Each **distinct** chunk text is embedded once (`ChunkHash` = SHA-1 of the text); vectors are unit
   length float32 (1024 × 4 bytes).
 - Replacing a record whose `RepeatKey` changed deletes its `WL_Payload_Chunks`, so the background
@@ -171,6 +192,7 @@ Groq (`tests/test_api.py`), so they are fast and free.
 |---|---|
 | `test_api.py` | Every endpoint, keys, client isolation, every error code, the full flow, Groq limits, no secrets in responses |
 | `test_storage.py` | Upsert/replace, exact repeat, embedding cache invalidation, matrix = row-by-row similarity, DPAPI, key lifecycle |
+| `test_v14.py` | `/match/main` fields, the `/match/test` switch, no provider name in client-facing output, the growing search index, pause / resume, alerts first |
 | `test_ai_review.py` | The AI review's fact checks and overall decision |
 
 Run the API locally against a test config:
@@ -224,7 +246,7 @@ Bump `VERSION` (and `clearscreen.__version__`) for every release.
 | Symptom | Where to look |
 |---|---|
 | A caller got `INTERNAL_ERROR ref=…` | Search `api.log` for the reference: the full stack trace is there |
-| Similar records never found | `GET /health` with the client's key → `pending_embeddings`; `api.log` "embedding worker" lines; is `ClearScreenEmbed` running? |
+| Similar records never found | Admin → **Embedding** (paused? time left?); `api.log` "embedding queue" lines; is `ClearScreenEmbed` running? |
 | `DATABASE_UNAVAILABLE` | `ops.test_connection` via Admin > Settings; is `NT SERVICE\ClearScreenApi` a user in the database? |
 | Slow AI cases | `waited_seconds` in the result = time spent on Groq's rate limit; `ai_seconds` = model time |
 | Service will not start | `logs\<Service>.err.log` and `<Service>.wrapper.log` |
