@@ -71,6 +71,8 @@ class Settings:
     max_match_batch: int = 500                 # alerts per /match request
     max_add_batch: int = 50_000                # records per /whitelist/add request
     enable_docs: bool = True                   # Swagger page at /docs
+    test_endpoint_enabled: bool = False        # POST /match/test (full detail, internal): listed and usable only when on
+    embedding_paused: bool = False             # the background embedding queue is paused (Admin > Embedding)
     embed_worker_seconds: int = 30             # how often new records are embedded in the background
 
     @classmethod

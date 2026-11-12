@@ -24,6 +24,7 @@ app/gateway2.py, copied verbatim; only storage is new.
 import hashlib
 import re
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -132,9 +133,44 @@ def pending_embeddings(con, cfg: Gateway2Config, client_id=None) -> int:
     return cur.execute(sql, *args).fetchone()[0]
 
 
-def embed_missing(con, embed, cfg: Gateway2Config, client_id=None, batch=64, progress=None, limit=2000) -> int:
+class AlertsFirst:
+    """Alerts go first: while an alert is being searched (its own embedding and the client's
+    index), the background worker holds back its next batch. The embedding service works on one
+    request at a time, so an alert then waits for at most one small batch."""
+
+    def __init__(self):
+        self._active = 0
+        self._lock = threading.Lock()
+        self._idle = threading.Event()
+        self._idle.set()
+
+    @contextmanager
+    def alert(self):
+        with self._lock:
+            self._active += 1
+            self._idle.clear()
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._active -= 1
+                if self._active == 0:
+                    self._idle.set()
+
+    def wait_idle(self, timeout: float | None = None) -> bool:
+        """True once no alert is being searched (False if `timeout` passed first)."""
+        return self._idle.wait(timeout)
+
+
+ALERTS_FIRST = AlertsFirst()
+
+
+def embed_missing(con, embed, cfg: Gateway2Config, client_id=None, batch=64, progress=None, limit=2000,
+                  before_batch=None) -> int:
     """Chunk and embed up to `limit` records (of one client, or all) not embedded yet. Each
-    distinct chunk text is embedded once. Commits as it goes. Returns the number of records done."""
+    distinct chunk text is embedded once. Commits as it goes. Returns the number of records done.
+    before_batch(): called before each call to the embedding service; returning False stops early
+    (pause) - vectors already made are kept, and the records whose chunks are all done count."""
     cur = con.cursor()
     sql = (f"SELECT TOP ({int(limit)}) r.RecordKey, r.Matched_Details FROM dbo.WL_Records r WHERE NOT EXISTS "
            "(SELECT 1 FROM dbo.WL_Payload_Chunks c WHERE c.RecordKey = r.RecordKey AND c.Model = ?)")
@@ -160,14 +196,22 @@ def embed_missing(con, embed, cfg: Gateway2Config, client_id=None, batch=64, pro
         have.update(r[0] for r in cur.fetchall())
     todo = [(h, t) for h, t in texts.items() if h not in have]
     cur.fast_executemany = True
+    stopped = False
     for start in range(0, len(todo), batch):
+        if before_batch is not None and before_batch() is False:
+            stopped = True
+            break
         part = todo[start:start + batch]
         vectors = _unit(embed([t for _, t in part]))
         cur.executemany("INSERT INTO dbo.WL_Chunk_Vectors (ChunkHash, Model, Vector) VALUES (?, ?, ?)",
                         [(h, cfg.embed_model, v.tobytes()) for (h, _), v in zip(part, vectors)])
         con.commit()
+        have.update(h for h, _ in part)
         if progress:
             progress(min(start + batch, len(todo)), len(todo))
+    if stopped:                                       # only records whose every chunk has a vector
+        unfinished = {r[0] for r in refs if r[3] not in have}
+        refs = [r for r in refs if r[0] not in unfinished]
     # A record replaced meanwhile loses its chunks again (db.upsert_many); refs of deleted records are skipped.
     keys = sorted({r[0] for r in refs})
     alive = set()
@@ -194,33 +238,84 @@ class ClientIndex:
     counts: np.ndarray          # how many chunks each record has
     refs: np.ndarray            # record chunks -> row of `vectors`
     vectors: np.ndarray         # distinct unit chunk vectors
+    ref_ids: np.ndarray | None = None   # RecordKey of each entry of `refs` (to extend the index)
+    hashes: list | None = None          # ChunkHash of each row of `vectors`
+
+
+_CHUNKS_OF_CLIENT = ("FROM dbo.WL_Payload_Chunks c JOIN dbo.WL_Records r ON r.RecordKey = c.RecordKey "
+                     "WHERE c.Model = ? AND r.ClientID = ?")
+_STAMP = ("SELECT COUNT(*), MAX(c.RecordKey), CHECKSUM_AGG(CHECKSUM(c.RecordKey, c.ChunkNo, c.ChunkHash)) "
+          + _CHUNKS_OF_CLIENT)
+
+
+def _vectors_for(cur, model: str, hashes: list[str]) -> dict:
+    got = {}
+    for start in range(0, len(hashes), 1000):
+        part = hashes[start:start + 1000]
+        cur.execute(f"SELECT ChunkHash, Vector FROM dbo.WL_Chunk_Vectors WHERE Model = ? AND ChunkHash IN "
+                    f"({','.join('?' * len(part))})", model, *part)
+        got.update((h, np.frombuffer(bytes(v), dtype=np.float32)) for h, v in cur.fetchall())
+    return got
+
+
+def _assemble(ref_ids: np.ndarray, refs: np.ndarray, vectors: np.ndarray, hashes: list) -> ClientIndex:
+    wl_ids, starts, counts = np.unique(ref_ids, return_index=True, return_counts=True)
+    return ClientIndex(wl_ids=wl_ids, starts=starts, counts=counts, refs=refs, vectors=vectors,
+                       ref_ids=ref_ids, hashes=hashes)
+
+
+def _extend(old: ClientIndex, cur, cfg: Gateway2Config, rows) -> ClientIndex:
+    """`old` plus the chunks of records added after it (all with a higher RecordKey)."""
+    hashes = list(old.hashes)
+    pos = {h: i for i, h in enumerate(hashes)}
+    new = sorted({h for _, h in rows if h not in pos})
+    got = _vectors_for(cur, cfg.embed_model, new)
+    new = [h for h in new if h in got]
+    for h in new:
+        pos[h] = len(hashes)
+        hashes.append(h)
+    rows = [(k, h) for k, h in rows if h in pos]
+    vectors = old.vectors
+    if new:
+        add = np.stack([got[h] for h in new])
+        vectors = add if not len(old.vectors) else np.vstack([old.vectors, add])
+    ref_ids = np.concatenate([old.ref_ids, np.array([k for k, _ in rows], dtype=np.int64)])
+    refs = np.concatenate([old.refs, np.array([pos[h] for _, h in rows], dtype=np.int64)])
+    return _assemble(ref_ids, refs, vectors, hashes)
 
 
 def client_index(con, cfg: Gateway2Config, client_id) -> ClientIndex:
-    """One client's chunk vectors, kept in memory until that client's embeddings change."""
+    """One client's chunk vectors, kept in memory until that client's embeddings change. When
+    records were only ADDED since (the background worker embedding new records), the kept index
+    is extended with just the new ones instead of reading every vector again; a checksum over the
+    kept part proves it is unchanged. Anything else (records replaced or removed) rebuilds it."""
     cur = con.cursor()
-    stamp = tuple(cur.execute("SELECT COUNT(*), MAX(c.RecordKey) FROM dbo.WL_Payload_Chunks c JOIN dbo.WL_Records r "
-                              "ON r.RecordKey = c.RecordKey WHERE c.Model = ? AND r.ClientID = ?",
-                              cfg.embed_model, client_id).fetchone())
+    stamp = tuple(cur.execute(_STAMP, cfg.embed_model, client_id).fetchone())
     key = (cfg.embed_model, client_id.lower())
     with _INDEX_LOCK:
-        if key in _INDEX and _INDEX[key][0] == stamp:
-            return _INDEX[key][1]
-    rows = cur.execute("SELECT c.RecordKey, c.ChunkHash FROM dbo.WL_Payload_Chunks c JOIN dbo.WL_Records r "
-                       "ON r.RecordKey = c.RecordKey WHERE c.Model = ? AND r.ClientID = ? ORDER BY c.RecordKey, c.ChunkNo",
-                       cfg.embed_model, client_id).fetchall()
-    got = dict(cur.execute("SELECT v.ChunkHash, v.Vector FROM dbo.WL_Chunk_Vectors v WHERE v.Model = ? AND v.ChunkHash IN "
-                           "(SELECT c.ChunkHash FROM dbo.WL_Payload_Chunks c JOIN dbo.WL_Records r ON r.RecordKey = c.RecordKey "
-                           "WHERE c.Model = ? AND r.ClientID = ?)", cfg.embed_model, cfg.embed_model, client_id).fetchall())
-    rows = [(k, h) for k, h in rows if h in got]
-    hashes = sorted({h for _, h in rows})
-    pos = {h: i for i, h in enumerate(hashes)}
-    vectors = (np.stack([np.frombuffer(bytes(got[h]), dtype=np.float32) for h in hashes]) if hashes
-               else np.zeros((0, 0), dtype=np.float32))
-    ids = np.array([w for w, _ in rows], dtype=np.int64)
-    wl_ids, starts, counts = np.unique(ids, return_index=True, return_counts=True)
-    index = ClientIndex(wl_ids=wl_ids, starts=starts, counts=counts,
-                        refs=np.array([pos[h] for _, h in rows], dtype=np.int64), vectors=vectors)
+        kept = _INDEX.get(key)
+    if kept and kept[0] == stamp:
+        return kept[1]
+    index = None
+    if kept and kept[1].ref_ids is not None and kept[0][1] is not None and stamp[0] > kept[0][0]:
+        old_count, old_max, old_sum = kept[0]
+        same = cur.execute(_STAMP + " AND c.RecordKey <= ?", cfg.embed_model, client_id, old_max).fetchone()
+        if (same[0], same[2]) == (old_count, old_sum):
+            rows = cur.execute("SELECT c.RecordKey, c.ChunkHash " + _CHUNKS_OF_CLIENT + " AND c.RecordKey > ? "
+                               "ORDER BY c.RecordKey, c.ChunkNo", cfg.embed_model, client_id, old_max).fetchall()
+            index = _extend(kept[1], cur, cfg, rows)
+    if index is None:
+        rows = cur.execute("SELECT c.RecordKey, c.ChunkHash " + _CHUNKS_OF_CLIENT + " ORDER BY c.RecordKey, c.ChunkNo",
+                           cfg.embed_model, client_id).fetchall()
+        got = {h: np.frombuffer(bytes(v), dtype=np.float32) for h, v in cur.execute(
+            "SELECT v.ChunkHash, v.Vector FROM dbo.WL_Chunk_Vectors v WHERE v.Model = ? AND v.ChunkHash IN "
+            "(SELECT c.ChunkHash " + _CHUNKS_OF_CLIENT + ")", cfg.embed_model, cfg.embed_model, client_id).fetchall()}
+        rows = [(k, h) for k, h in rows if h in got]
+        hashes = sorted({h for _, h in rows})
+        pos = {h: i for i, h in enumerate(hashes)}
+        vectors = (np.stack([got[h] for h in hashes]) if hashes else np.zeros((0, 0), dtype=np.float32))
+        index = _assemble(np.array([k for k, _ in rows], dtype=np.int64),
+                          np.array([pos[h] for _, h in rows], dtype=np.int64), vectors, hashes)
     with _INDEX_LOCK:
         _INDEX[key] = (stamp, index)
     return index
@@ -407,8 +502,9 @@ def find_candidates(alert: dict, con, cfg: Gateway2Config | None = None, embed=N
     if not client:                                    # no client -> nothing it may be compared with
         return dict(send_to_ai=False, threshold=cfg.ai_threshold, compared=0, candidates=[], near_misses=[])
     embed = embed or ollama_embedder(cfg)
-    current = _unit(embed(chunk_payload(alert["Matched_Payload"], cfg.chunk_max_chars)))
-    index = client_index(con, cfg, client)
+    with ALERTS_FIRST.alert():                        # the background worker steps aside meanwhile
+        current = _unit(embed(chunk_payload(alert["Matched_Payload"], cfg.chunk_max_chars)))
+        index = client_index(con, cfg, client)
     sims = payload_similarities(current, index)
     # Penalties only lower the score, so a record below the threshold on payload alone can never be
     # sent: score those at or above it, plus the best of the rest for near_misses.

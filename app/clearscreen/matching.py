@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The matching flow of POST /match/groq, for one alert of one client. Only that client's
+"""The matching flow of POST /match/main and /match/test, for one alert of one client. Only that client's
 whitelist records are ever used.
 
   1. Exact repeat: a whitelisted record of the client with the same Screened_Fields,
@@ -13,7 +13,7 @@ whitelist records are ever used.
        prior whitelist still applies -> CLEAR · manual review -> REVIEW · no longer applies -> FLAG
 
 A provider's usage limit (ai_review.AIProviderLimit) is not turned into a disposition: it
-propagates to the endpoint (GROQ_LIMIT_REACHED).
+propagates to the endpoint (AI_LIMIT_REACHED).
 """
 import re
 import time

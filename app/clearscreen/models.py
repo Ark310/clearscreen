@@ -32,7 +32,8 @@ class AddResult(BaseModel):
     records: list[dict]                          # {ClientID, Unique_ID, status: added | replaced}
 
 
-class MatchResult(BaseModel):
+class MatchDecision(BaseModel):
+    """The decision on one alert (POST /match/main)."""
     ClientID: str
     Unique_ID: str
     disposition: Literal["CLEAR", "REVIEW", "FLAG"]
@@ -40,12 +41,19 @@ class MatchResult(BaseModel):
     rule: Literal["exact_repeat_whitelisted", "no_listing_details", "score_below_threshold",
                   "no_similar_whitelisted", "similar_search_error", "prior_adjudication_applicable",
                   "manual_review_required", "prior_adjudication_not_applicable"]
-    model: str                                   # which AI the endpoint uses (also when it was not needed)
     explanation: str
     score: float | None = None                   # the match score (customer vs listing), 0.80 threshold
     repeat_of: list[str] = []                    # Unique_IDs this alert exactly repeats
-    precedent: str | None = None                 # CLEAR by the AI: the whitelisted Unique_ID relied on
+    precedent: str | None = None                 # the whitelisted Unique_ID relied on
     precedent_reasoning: str | None = None       # ... and its Analyst_Allow_Reasoning
+
+
+MAIN_FIELDS = tuple(MatchDecision.model_fields)
+
+
+class MatchResult(MatchDecision):
+    """The decision on one alert with every internal detail (POST /match/test, internal use)."""
+    model: str                                   # which AI the endpoint uses (also when it was not needed)
     ai_calls: int = 0
     seconds: float = 0.0                         # the whole alert
     ai_seconds: float = 0.0                      # of which AI calls
@@ -68,6 +76,6 @@ class ErrorResponse(BaseModel):
     error_code: str = Field(examples=["MISSING_CLIENT_ID"])
     message: str = Field(examples=["ClientID is required: whitelist records are only matched within the same client."])
     errors: list[dict] | None = None             # INVALID_REQUEST: which fields are wrong
-    detail: str | None = None                    # GROQ_LIMIT_REACHED: Groq's own message
-    completed: list[dict] | None = None          # GROQ_LIMIT_REACHED: results finished before the limit
-    not_run: list[str] | None = None             # GROQ_LIMIT_REACHED: Unique_IDs not checked
+    detail: str | None = None                    # AI_LIMIT_REACHED on /match/test only: the AI provider's own message
+    completed: list[dict] | None = None          # AI_LIMIT_REACHED: results finished before the limit
+    not_run: list[str] | None = None             # AI_LIMIT_REACHED: Unique_IDs not checked

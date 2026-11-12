@@ -4,12 +4,16 @@
   GET  /health                                    service status (more with a valid key)
   POST /whitelist/add                             add or replace whitelist records (one or a list)
   GET  /whitelist/{ClientID}/{Unique_ID}          one stored record
-  POST /match/groq                                check alerts; the AI review runs on Groq
+  POST /match/main                                check alerts: the decision only (what clients use)
+  POST /match/test                                the same check with every internal detail (timings, the
+                                                  AI provider, candidates, reviews). Only when switched on in
+                                                  the Admin app (Settings); otherwise 404 and not in /docs.
   GET  /search                                    the client's records most similar to free text
 
 Every call except /health needs an X-API-Key. A key belongs to one client and works only for
 that client's records: a ClientID in a request must be the key's client (CLIENT_MISMATCH).
 Errors are {"error_code", "message"}; nothing internal (paths, stack traces, SQL) is returned.
+Client-facing text never names the AI provider: only /match/test (internal) does.
 The API listens on 127.0.0.1 only; the HTTPS proxy (Caddy) is what faces the internet.
 """
 import logging
@@ -21,14 +25,17 @@ from logging.handlers import RotatingFileHandler
 
 from fastapi import Body, Depends, FastAPI, Query, Request, Security
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from clearscreen import PRODUCT, __version__, ai_review, db, groq_client, similarity
 from clearscreen.config import SecureStore, Settings, logs_dir
+from clearscreen.embedding_queue import EmbeddingWorker
 from clearscreen.matching import match_alert
-from clearscreen.models import AddResult, ErrorResponse, MatchRequest, MatchResult, SearchHit, WLRecord
+from clearscreen.models import (MAIN_FIELDS, AddResult, ErrorResponse, MatchDecision, MatchRequest, MatchResult,
+                                 SearchHit, WLRecord)
 from clearscreen.security import RateLimiter, client_for_key
 
 log = logging.getLogger("clearscreen")
@@ -103,28 +110,9 @@ _stop = threading.Event()
 
 def _embed_worker():
     """Embed new or replaced whitelist records in the background, so adding records returns at
-    once. Until a record is embedded only the exact-repeat check can use it."""
-    while not _stop.is_set():
-        done = 0
-        try:
-            cfg = STATE.sim_cfg()
-            con = STATE.connect()
-            try:
-                embed = similarity.ollama_embedder(cfg)
-                while not _stop.is_set():
-                    n = similarity.embed_missing(con, embed, cfg, limit=500)
-                    done += n
-                    if n == 0:
-                        break
-            finally:
-                con.close()
-            if done:
-                log.info("embedding worker: embedded %d record(s)", done)
-        except ServiceError:
-            pass                                                   # not configured yet
-        except Exception as e:                                    # noqa: BLE001
-            log.warning("embedding worker: %s: %s", type(e).__name__, str(e)[:200])
-        _stop.wait(STATE.settings.embed_worker_seconds)
+    once. Until a record is embedded only the exact-repeat check can use it. Pause / resume,
+    alerts first and progress: clearscreen.embedding_queue."""
+    EmbeddingWorker(STATE.connect, STATE.sim_cfg, _stop).run(lambda: STATE.settings.embed_worker_seconds)
 
 
 @asynccontextmanager
@@ -237,8 +225,14 @@ def _same_client(client_id: str, records) -> None:
 
 
 # --------------------------------------------------------------- endpoints ---
-def _errors(*codes) -> dict:
-    """The error responses a route can give, each with a real example, for the API documentation."""
+AI_LIMIT_MESSAGE = "The AI review's usage limit was reached. Send the alerts in not_run again later."
+AI_NOT_CONFIGURED_MESSAGE = "The AI review is not available on this server. Contact your ClearScreen administrator."
+
+
+def _errors(*codes, ai: bool = False, full: bool = False) -> dict:
+    """The error responses a route can give, each with a real example, for the API documentation.
+    ai: a /match route (the AI errors apply). full: /match/test, whose limit error also carries
+    the AI provider's own message."""
     what = {
         400: ("A record has no ClientID", [("MISSING_CLIENT_ID", "ClientID is required: whitelist records are only "
                                             "matched within the same client. Missing or blank in the request.")]),
@@ -251,20 +245,22 @@ def _errors(*codes) -> dict:
                                           ("REQUEST_TOO_LARGE", "Requests may be at most 100 MB.")]),
         422: ("A field is missing or malformed", [("INVALID_REQUEST", "The request does not match the expected format.")]),
         429: ("Slow down", [("RATE_LIMITED", "Too many requests. Try again in 12 s."),
-                            ("GROQ_LIMIT_REACHED", "Groq limit reached")]),
+                            ("AI_LIMIT_REACHED", AI_LIMIT_MESSAGE)]),
         503: ("A part of the service is unavailable", [
             ("DATABASE_UNAVAILABLE", "The database is not reachable right now."),
-            ("GROQ_NOT_CONFIGURED", "No Groq API key is set. Add it in the ClearScreen Admin app (Settings).")]),
+            ("AI_NOT_CONFIGURED", AI_NOT_CONFIGURED_MESSAGE)]),
     }
     out = {}
     for c in codes:
         title, examples = what[c]
+        examples = [e for e in examples if ai or not e[0].startswith("AI_")]
         ex = {code: {"summary": code, "value": {"error_code": code, "message": msg}} for code, msg in examples}
         if c == 422:
             ex["INVALID_REQUEST"]["value"]["errors"] = [{"where": "Matched_Details", "problem": "Field required"}]
-        if c == 429:
-            ex["GROQ_LIMIT_REACHED"]["value"].update(detail="Groq limit reached (Groq says retry in 60 min)",
-                                                     completed=[], not_run=["ALERT-9001"])
+        if c == 429 and ai:
+            ex["AI_LIMIT_REACHED"]["value"].update(completed=[], not_run=["ALERT-9001"])
+            if full:
+                ex["AI_LIMIT_REACHED"]["value"]["detail"] = "Groq limit reached (Groq says retry in 60 min)"
         out[c] = {"model": ErrorResponse, "description": f"{title}: " + " or ".join(e[0] for e in examples),
                   "content": {"application/json": {"examples": ex}}}
     return out
@@ -304,8 +300,8 @@ def health(key: str | None = Security(_api_key)):
         comp["embedding_service"] = "ok"
     except Exception:                                             # noqa: BLE001
         comp["embedding_service"] = "unavailable"
-    comp["groq_key"] = "configured" if STATE.store.get("groq_api_key") else "missing"
-    if comp["database"] != "ok" or comp["embedding_service"] != "ok" or comp["groq_key"] != "configured":
+    comp["ai_service"] = "configured" if STATE.store.get("groq_api_key") else "not_configured"
+    if comp["database"] != "ok" or comp["embedding_service"] != "ok" or comp["ai_service"] != "configured":
         out["status"] = "degraded"
     client_id, client = client_for_key(STATE.store, key)
     if con is not None and client_id:
@@ -356,13 +352,9 @@ def whitelist_get(ClientID: str, Unique_ID: str, client_id: str = Depends(requir
     return rec
 
 
-@app.post("/match/groq", response_model=list[MatchResult], tags=["match"],
-          responses=_errors(400, 401, 403, 413, 422, 429, 503))
-def match_groq(body: MatchRequest | list[MatchRequest] = Body(openapi_examples=MATCH_EXAMPLES),
-               client_id: str = Depends(require_client)):
-    """Check alerts against the client's whitelist; the AI review runs on Groq Cloud. Only whitelist
-    records of the key's client are used. When Groq's limit is reached the request fails with
-    GROQ_LIMIT_REACHED (results finished before that are included)."""
+def _match(body, client_id: str, full: bool) -> list:
+    """Shared by /match/main and /match/test: the same checks and decisions; `full` keeps every
+    internal detail, otherwise only the decision fields (MAIN_FIELDS) are returned."""
     alerts = body if isinstance(body, list) else [body]
     if len(alerts) > STATE.settings.max_match_batch:
         raise ServiceError(413, "BATCH_TOO_LARGE", f"{len(alerts)} alerts; send at most "
@@ -371,8 +363,11 @@ def match_groq(body: MatchRequest | list[MatchRequest] = Body(openapi_examples=M
     try:
         chat = groq_client.groq_chat(STATE.store, STATE.groq_cfg())
     except groq_client.GroqNotConfigured as e:
-        raise ServiceError(503, "GROQ_NOT_CONFIGURED", str(e)) from e
+        raise ServiceError(503, "AI_NOT_CONFIGURED", str(e) if full else AI_NOT_CONFIGURED_MESSAGE) from e
     model = f"groq {STATE.settings.groq_model}"
+
+    def shape(r: MatchResult):
+        return r if full else MatchDecision(**r.model_dump(include=set(MAIN_FIELDS)))
     done = []
     con = STATE.connect()
     try:
@@ -380,12 +375,44 @@ def match_groq(body: MatchRequest | list[MatchRequest] = Body(openapi_examples=M
             done.append(match_alert(a.model_dump() | {"ClientID": client_id}, con, chat=chat, model=model,
                                     sim_cfg=STATE.sim_cfg(), ai_cfg=STATE.ai_cfg()))
     except groq_client.GroqLimitReached as e:
-        raise ServiceError(429, "GROQ_LIMIT_REACHED", "Groq limit reached", detail=str(e),
-                           completed=[r.model_dump(exclude={"comparison_trace"}) for r in done],
-                           not_run=[a.Unique_ID for a in alerts[len(done):]]) from e
+        extra = dict(completed=[r.model_dump(exclude={"comparison_trace"}) if full else shape(r).model_dump()
+                                for r in done],
+                     not_run=[a.Unique_ID for a in alerts[len(done):]])
+        if full:
+            extra["detail"] = str(e)
+        raise ServiceError(429, "AI_LIMIT_REACHED", AI_LIMIT_MESSAGE, **extra) from e
     finally:
         con.close()
-    return done
+    return [shape(r) for r in done]
+
+
+def _test_endpoint_on():
+    """/match/test exists only while it is switched on (Admin > Settings); otherwise it looks like
+    any unknown address - before the key or the body are even looked at."""
+    if not STATE.settings.test_endpoint_enabled:
+        raise StarletteHTTPException(404, "Not Found")
+
+
+@app.post("/match/main", response_model=list[MatchDecision], tags=["match"],
+          responses=_errors(400, 401, 403, 413, 422, 429, 503, ai=True))
+def match_main(body: MatchRequest | list[MatchRequest] = Body(openapi_examples=MATCH_EXAMPLES),
+               client_id: str = Depends(require_client)):
+    """Check alerts against the client's whitelist and return the decision on each: disposition,
+    confidence, the rule that decided, the explanation and, when a whitelisted record was relied on,
+    that record (precedent) and its analyst reasoning. Only whitelist records of the key's client
+    are used. If the AI review's usage limit is reached, the request fails with AI_LIMIT_REACHED;
+    the decisions finished before that are included (completed) and the rest are listed (not_run)."""
+    return _match(body, client_id, full=False)
+
+
+@app.post("/match/test", response_model=list[MatchResult], tags=["match"], dependencies=[Depends(_test_endpoint_on)],
+          responses=_errors(400, 401, 403, 413, 422, 429, 503, ai=True, full=True))
+def match_test(body: MatchRequest | list[MatchRequest] = Body(openapi_examples=MATCH_EXAMPLES),
+               client_id: str = Depends(require_client)):
+    """INTERNAL - the same check as /match/main with every detail: the AI provider and model (Groq),
+    AI calls, timings, cost, the similar-case candidates, each AI review and the score trace. Only
+    available while switched on in the ClearScreen Admin app (Settings > Test endpoint)."""
+    return _match(body, client_id, full=True)
 
 
 @app.get("/search", response_model=list[SearchHit], tags=["whitelist"], responses=_errors(401, 403, 422, 429, 503))
@@ -397,3 +424,21 @@ def search(q: str = Query(..., min_length=2, max_length=2000, description="Free 
         return similarity.search(con, STATE.sim_cfg(), client_id, q, k)
     finally:
         con.close()
+
+
+# ------------------------------------------------------ API documentation ---
+_OPENAPI: dict = {}
+
+
+def _openapi() -> dict:
+    """The /docs page and /openapi.json. /match/test is listed only while it is switched on, so
+    with it off the published description never mentions the internal endpoint or its models."""
+    shown = bool(STATE.settings.test_endpoint_enabled)
+    if shown not in _OPENAPI:
+        routes = [r for r in app.routes if shown or getattr(r, "path", None) != "/match/test"]
+        _OPENAPI[shown] = get_openapi(title=app.title, version=app.version, description=app.description,
+                                      routes=routes)
+    return _OPENAPI[shown]
+
+
+app.openapi = _openapi

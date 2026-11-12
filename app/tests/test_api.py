@@ -40,6 +40,11 @@ def env(sql, monkeypatch):
     store.update(lambda d: (d.clear(), d.update(sql_connection_string=TEST_SQL, groq_api_key="gsk_test")))
     keys = {"C1": add_client(store, "C1", "Client One"), "C2": add_client(store, "C2", "Client Two")}
     api.STATE.limiter = api.RateLimiter()
+    s = api.Settings()
+    s.test_endpoint_enabled = True                # these tests read the full detail of /match/test
+    s.save()
+    api.STATE._settings = None
+    api._OPENAPI.clear()
     monkeypatch.setattr(similarity, "ollama_embedder", lambda cfg: fake_embed)
     replies = []
     real = groq_client.groq_chat
@@ -65,7 +70,7 @@ def env(sql, monkeypatch):
 
 # ---------------------------------------------------------------- API keys ---
 @pytest.mark.parametrize("method,path", [("POST", "/whitelist/add"), ("GET", "/whitelist/C1/1"),
-                                         ("POST", "/match/groq"), ("GET", "/search?q=acme")])
+                                         ("POST", "/match/test"), ("GET", "/search?q=acme")])
 def test_every_route_needs_a_valid_key(env, method, path):
     for headers in ({}, {"X-API-Key": "cls_wrong"}, {"X-API-Key": "not-a-key"}):
         r = env.client.request(method, path, headers=headers, json=RECORD)
@@ -81,7 +86,7 @@ def test_reset_key_stops_the_old_one(env):
 
 def test_disabled_client_refused(env):
     set_enabled(env.store, "C1", False)
-    r = env.client.post("/match/groq", headers=env.h(), json=ALERT)
+    r = env.client.post("/match/test", headers=env.h(), json=ALERT)
     assert r.status_code == 403 and r.json()["error_code"] == "CLIENT_DISABLED"
 
 
@@ -97,7 +102,7 @@ def test_rate_limit(env, monkeypatch):
 def test_a_key_works_only_for_its_own_client(env):
     r = env.client.post("/whitelist/add", headers=env.h("C1"), json=RECORD | {"ClientID": "C2"})
     assert r.status_code == 403 and r.json()["error_code"] == "CLIENT_MISMATCH"
-    r = env.client.post("/match/groq", headers=env.h("C1"), json=[ALERT, ALERT | {"ClientID": "C2"}])
+    r = env.client.post("/match/test", headers=env.h("C1"), json=[ALERT, ALERT | {"ClientID": "C2"}])
     assert r.status_code == 403 and "record(s) 1" in r.json()["message"]
     env.client.post("/whitelist/add", headers=env.h("C2"), json=RECORD | {"ClientID": "C2"})
     assert env.client.get("/whitelist/C2/1", headers=env.h("C1")).json()["error_code"] == "CLIENT_MISMATCH"
@@ -111,14 +116,14 @@ def test_client_id_is_case_insensitive_and_stored_canonically(env):
 def test_other_clients_whitelist_never_used(env):
     env.client.post("/whitelist/add", headers=env.h("C2"), json=[WL_LIMA | {"ClientID": "C2"}, RECORD | {"ClientID": "C2"}])
     env.embed_now()
-    [r] = env.client.post("/match/groq", headers=env.h("C1"), json=NEW_LIMA).json()
+    [r] = env.client.post("/match/test", headers=env.h("C1"), json=NEW_LIMA).json()
     assert (r["disposition"], r["rule"]) == ("REVIEW", "no_similar_whitelisted")
-    [r] = env.client.post("/match/groq", headers=env.h("C1"), json=ALERT).json()
+    [r] = env.client.post("/match/test", headers=env.h("C1"), json=ALERT).json()
     assert r["rule"] != "exact_repeat_whitelisted"
 
 
 # ----------------------------------------------------------------- errors ---
-@pytest.mark.parametrize("path", ["/whitelist/add", "/match/groq"])
+@pytest.mark.parametrize("path", ["/whitelist/add", "/match/test"])
 @pytest.mark.parametrize("bad", [{k: v for k, v in RECORD.items() if k != "ClientID"}, RECORD | {"ClientID": "  "},
                                  RECORD | {"ClientID": None}])
 def test_missing_client_id(env, path, bad):
@@ -127,7 +132,7 @@ def test_missing_client_id(env, path, bad):
 
 
 def test_invalid_request_and_unknown_route(env):
-    r = env.client.post("/match/groq", headers=env.h(), json={k: v for k, v in ALERT.items() if k != "Matched_Details"})
+    r = env.client.post("/match/test", headers=env.h(), json={k: v for k, v in ALERT.items() if k != "Matched_Details"})
     assert r.status_code == 422 and r.json()["error_code"] == "INVALID_REQUEST"
     assert env.client.get("/nope").json()["error_code"] == "NOT_FOUND"
 
@@ -182,28 +187,28 @@ def test_search_returns_only_own_client(env):
 # ------------------------------------------------------------------- match ---
 def test_exact_repeat_cleared_with_its_reasoning(env):
     env.client.post("/whitelist/add", headers=env.h(), json=RECORD)
-    [r] = env.client.post("/match/groq", headers=env.h(), json=ALERT | {"Screened_Values": " jon  ewyler ,CANADA,Toronto,Ontario"}).json()
+    [r] = env.client.post("/match/test", headers=env.h(), json=ALERT | {"Screened_Values": " jon  ewyler ,CANADA,Toronto,Ontario"}).json()
     assert (r["disposition"], r["rule"], r["repeat_of"], r["Unique_ID"]) == ("CLEAR", "exact_repeat_whitelisted", ["1"], "9001")
     assert r["precedent_reasoning"] == RECORD["Analyst_Allow_Reasoning"] and env.groq_calls == []
 
 
 def test_score_below_threshold_cleared(env):
-    [r] = env.client.post("/match/groq", headers=env.h(), json=ALERT).json()
+    [r] = env.client.post("/match/test", headers=env.h(), json=ALERT).json()
     assert (r["disposition"], r["rule"], r["score"]) == ("CLEAR", "score_below_threshold", 0.74)
 
 
 def test_no_listing_details_reviewed_unless_exact_repeat(env):
     nd = " Entity Details NOT AVAILABLE"
-    [r] = env.client.post("/match/groq", headers=env.h(), json=ALERT | {"Matched_Details": nd}).json()
+    [r] = env.client.post("/match/test", headers=env.h(), json=ALERT | {"Matched_Details": nd}).json()
     assert (r["disposition"], r["rule"]) == ("REVIEW", "no_listing_details")
     env.client.post("/whitelist/add", headers=env.h(), json=RECORD | {"Matched_Details": nd})
-    [r] = env.client.post("/match/groq", headers=env.h(), json=ALERT | {"Matched_Details": nd}).json()
+    [r] = env.client.post("/match/test", headers=env.h(), json=ALERT | {"Matched_Details": nd}).json()
     assert r["rule"] == "exact_repeat_whitelisted"
 
 
 def test_not_embedded_yet_means_no_similar_case(env):
     env.client.post("/whitelist/add", headers=env.h(), json=WL_LIMA)          # not embedded yet
-    [r] = env.client.post("/match/groq", headers=env.h(), json=NEW_LIMA).json()
+    [r] = env.client.post("/match/test", headers=env.h(), json=NEW_LIMA).json()
     assert r["rule"] == "no_similar_whitelisted" and r["similar"]["pending_embeddings"] == 1
 
 
@@ -211,7 +216,7 @@ def test_ai_applicable_clears_citing_the_record(env):
     env.replies.append(_ok(answer(case_id="1", rationales=[rationale("LOCATION_MISMATCH")], confidence=93)))
     env.client.post("/whitelist/add", headers=env.h(), json=WL_LIMA)
     env.embed_now()
-    [r] = env.client.post("/match/groq", headers=env.h(), json=NEW_LIMA).json()
+    [r] = env.client.post("/match/test", headers=env.h(), json=NEW_LIMA).json()
     assert (r["disposition"], r["rule"], r["precedent"], r["confidence"]) == ("CLEAR", "prior_adjudication_applicable", "1", 0.93)
     assert r["precedent_reasoning"] == "Different city." and r["ai_calls"] == 1 and r["model"].startswith("groq")
     assert env.groq_calls[0]["json"]["model"] == "qwen/qwen3.8-27b"
@@ -223,7 +228,7 @@ def test_ai_not_applicable_flagged(env):
                                   rationales=[rationale("LOCATION_MISMATCH")])))
     env.client.post("/whitelist/add", headers=env.h(), json=WL_LIMA)
     env.embed_now()
-    [r] = env.client.post("/match/groq", headers=env.h(), json=NEW_LIMA).json()
+    [r] = env.client.post("/match/test", headers=env.h(), json=NEW_LIMA).json()
     assert (r["disposition"], r["rule"]) == ("FLAG", "prior_adjudication_not_applicable")
 
 
@@ -231,16 +236,16 @@ def test_groq_limit_is_its_own_error_with_what_was_done(env):
     env.replies.append(_Resp(429, headers={"retry-after": "3600"}, text="Rate limit reached: tokens per day"))
     env.client.post("/whitelist/add", headers=env.h(), json=WL_LIMA)
     env.embed_now()
-    r = env.client.post("/match/groq", headers=env.h(), json=[ALERT, NEW_LIMA, NEW_LIMA | {"Unique_ID": "9003"}])
+    r = env.client.post("/match/test", headers=env.h(), json=[ALERT, NEW_LIMA, NEW_LIMA | {"Unique_ID": "9003"}])
     body = r.json()
-    assert r.status_code == 429 and body["error_code"] == "GROQ_LIMIT_REACHED" and body["message"] == "Groq limit reached"
+    assert r.status_code == 429 and body["error_code"] == "AI_LIMIT_REACHED" and "Groq" in body["detail"]
     assert [c["Unique_ID"] for c in body["completed"]] == ["9001"] and body["not_run"] == ["9002", "9003"]
 
 
 def test_groq_not_configured(env):
     env.store.update(lambda d: d.pop("groq_api_key"))
-    r = env.client.post("/match/groq", headers=env.h(), json=ALERT)
-    assert r.status_code == 503 and r.json()["error_code"] == "GROQ_NOT_CONFIGURED"
+    r = env.client.post("/match/test", headers=env.h(), json=ALERT)
+    assert r.status_code == 503 and r.json()["error_code"] == "AI_NOT_CONFIGURED"
 
 
 def test_secrets_never_in_responses(env):
