@@ -4,8 +4,9 @@ as an administrator).
 
   Dashboard  service status, start / stop / restart, health check
   Clients    add a client (name + Client ID), reset its API key, enable / disable, rename, remove
-  Settings   Groq API key, SQL Server connection string, HTTPS domain, limits
+  Settings   Groq API key, SQL Server connection string, HTTPS domain, limits, the /match/test switch
   Data       load whitelist records from Excel, back up and restore the database
+  Embedding  the embedding queue: records waiting per client, progress, time left; pause / resume
   Logs       read the service logs
 
 Start it from the "ClearScreen Admin" shortcut, or: pythonw -m clearscreen.admin
@@ -16,9 +17,10 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+from datetime import datetime, timezone
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from clearscreen import PRODUCT, __version__, db
+from clearscreen import PRODUCT, __version__, db, embedding_queue
 from clearscreen.admin import ops, services
 from clearscreen.config import SecureStore, Settings, logs_dir
 from clearscreen.security import add_client, remove_client, rename_client, reset_key, set_enabled
@@ -63,11 +65,14 @@ class AdminApp(tk.Tk):
                                                                                           padx=10, pady=4)
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=10, pady=(8, 0))
+        self.nb, self.tabs = nb, {}
         for name, builder in (("Dashboard", self._dashboard), ("Clients", self._clients), ("Settings", self._settings),
-                              ("Data", self._data), ("Logs", self._logs)):
+                              ("Data", self._data), ("Embedding", self._embedding), ("Logs", self._logs)):
             frame = ttk.Frame(nb, padding=12)
             nb.add(frame, text=f"  {name}  ")
+            self.tabs[name] = frame
             builder(frame)
+        nb.bind("<<NotebookTabChanged>>", lambda _e: self._on_tab())
         self.after(200, self.refresh_services)
         self.after(400, self.refresh_clients)
 
@@ -373,8 +378,39 @@ class AdminApp(tk.Tk):
             row=11, column=1, sticky="w", pady=4)
         ttk.Button(f, text="Save and restart services", command=self.save_settings).grid(row=12, column=1, sticky="w",
                                                                                          pady=8)
+
+        ttk.Separator(f).grid(row=13, column=0, columnspan=4, sticky="ew", pady=10)
+        ttk.Label(f, text="Test endpoint", style="H.TLabel").grid(row=14, column=0, sticky="nw")
+        self.test_state = tk.StringVar()
+        ttk.Label(f, textvariable=self.test_state, wraplength=560).grid(row=14, column=1, sticky="w")
+        self.test_button = ttk.Button(f, command=self.toggle_test_endpoint)
+        self.test_button.grid(row=14, column=2, padx=4, sticky="n")
         f.columnconfigure(1, weight=1)
         self.refresh_secret_state()
+        self.refresh_test_endpoint()
+
+    def refresh_test_endpoint(self):
+        on = Settings.load().test_endpoint_enabled
+        self.test_state.set(
+            "ON - POST /match/test is listed on the /docs page and answers with every internal detail "
+            "(AI provider, timings, candidates, reviews). Any client's key can call it." if on else
+            "OFF - POST /match/test is hidden from the /docs page and answers 404. Clients use /match/main, "
+            "which returns the decision only.")
+        self.test_button.configure(text="Turn off" if on else "Turn on")
+
+    def toggle_test_endpoint(self):
+        s = Settings.load()
+        if not s.test_endpoint_enabled and not messagebox.askyesno(
+                PRODUCT, "Turn on POST /match/test?\n\nIt will be listed on the public /docs page, and any client "
+                         "with a valid API key can call it and see internal details, including the AI provider. "
+                         "Turn it off again when you are done testing."):
+            return
+        s.test_endpoint_enabled = not s.test_endpoint_enabled
+        s.save()
+        self.settings = s
+        self.refresh_test_endpoint()
+        self.status.set(f"/match/test turned {'on' if s.test_endpoint_enabled else 'off'} - takes effect within "
+                        "10 seconds, no restart needed.")
 
     def refresh_secret_state(self):
         self.groq_state.set("Configured" if self.store.get("groq_api_key") else "NOT SET - matching will not work")
@@ -616,6 +652,215 @@ class AdminApp(tk.Tk):
             os.startfile(ops.default_backup_dir(self.store.get("sql_connection_string")))
         except Exception as e:                                    # noqa: BLE001
             messagebox.showerror(PRODUCT, f"Could not open the backup folder: {e}")
+
+    # ---------------------------------------------------------- embedding --
+    def _embedding(self, f):
+        ttk.Label(f, text="Embedding queue", style="H.TLabel").pack(anchor="w")
+        ttk.Label(f, text="New and replaced whitelist records wait here until the API service has embedded them; "
+                          "until then only the exact-repeat check can use them. Clients are worked through oldest "
+                          "first, and while an alert is being checked the queue steps aside. Pausing takes effect "
+                          "after the current small batch (seconds) and lasts, also across restarts, until you "
+                          "resume.", style="Muted.TLabel", wraplength=960).pack(anchor="w", pady=(0, 6))
+        bar = ttk.Frame(f)
+        bar.pack(fill="x")
+        self.emb_state = tk.StringVar(value="...")
+        ttk.Label(bar, textvariable=self.emb_state, style="H.TLabel").pack(side="left")
+        for label, cmd in (("Refresh", self.refresh_embedding), ("Resume", lambda: self.set_embedding_paused(False)),
+                           ("Pause", lambda: self.set_embedding_paused(True))):
+            ttk.Button(bar, text=label, command=cmd).pack(side="right", padx=(6, 0))
+        self.emb_message = tk.StringVar()
+        ttk.Label(f, textvariable=self.emb_message, style="Muted.TLabel", wraplength=960).pack(anchor="w", pady=(2, 8))
+
+        cols = ("id", "name", "waiting", "done", "taken", "left", "since")
+        self.emb_tree = ttk.Treeview(f, columns=cols, show="headings", height=7, selectmode="browse")
+        for c, label, w in (("id", "Client ID", 110), ("name", "Name", 190), ("waiting", "Records waiting", 120),
+                            ("done", "Embedded (this run)", 150), ("taken", "Time taken", 110),
+                            ("left", "Est. time left", 130), ("since", "Waiting since (UTC)", 170)):
+            self.emb_tree.heading(c, text=label)
+            self.emb_tree.column(c, width=w, anchor="w")
+        self.emb_tree.pack(fill="x")
+        self.emb_tree.bind("<<TreeviewSelect>>", lambda _e: self.refresh_waiting_records())
+        self.emb_total = tk.StringVar()
+        ttk.Label(f, textvariable=self.emb_total).pack(anchor="w", pady=(4, 8))
+
+        self.emb_records_title = tk.StringVar(value="Select a client above to see its waiting records.")
+        ttk.Label(f, textvariable=self.emb_records_title, style="H.TLabel").pack(anchor="w")
+        rcols = ("uid", "added", "size")
+        self.emb_records = ttk.Treeview(f, columns=rcols, show="headings", height=10)
+        for c, label, w in (("uid", "Unique_ID", 260), ("added", "Added / replaced (UTC)", 190),
+                            ("size", "Listing size (characters)", 190)):
+            self.emb_records.heading(c, text=label)
+            self.emb_records.column(c, width=w, anchor="w")
+        self.emb_records.pack(fill="both", expand=True)
+        self._emb_after = None
+        self._emb_loading = False
+
+    def _on_tab(self):
+        if self.nb.select() == str(self.tabs["Embedding"]):
+            self.refresh_embedding()
+
+    def _embedding_tick(self):
+        """Refresh every 15 s while the Embedding tab is open."""
+        self._emb_after = None
+        if self.nb.select() == str(self.tabs["Embedding"]):
+            self.refresh_embedding()
+
+    @staticmethod
+    def _duration(seconds) -> str:
+        if seconds is None:
+            return "-"
+        s = int(round(seconds))
+        if s < 60:
+            return f"{s} s"
+        h, m = divmod(s // 60, 60)
+        return f"{h} h {m:02d} min" if h else f"{m} min"
+
+    def refresh_embedding(self):
+        if self._emb_loading:
+            return
+        self._emb_loading = True
+        cs = self.store.get("sql_connection_string")
+        model = Settings.load().embed_model
+
+        def work():
+            status = embedding_queue.read_status()
+            queue, error = [], None
+            if cs:
+                try:
+                    con = db.connect(cs)
+                    try:
+                        queue = embedding_queue.queue_by_client(con, model)
+                    finally:
+                        con.close()
+                except Exception as e:                            # noqa: BLE001
+                    error = f"Could not read the queue from SQL Server ({type(e).__name__})."
+            else:
+                error = "No SQL Server connection is set."
+            return status, queue, error
+
+        def done(result, err):
+            self._emb_loading = False
+            if err is not None:
+                self.emb_state.set("Queue: could not be read")
+                self.emb_message.set(str(err))
+            else:
+                self._show_embedding(*result)
+            if self._emb_after is None:
+                self._emb_after = self.after(15000, self._embedding_tick)
+
+        def run():
+            try:
+                r, e = work(), None
+            except Exception as ex:                               # noqa: BLE001
+                r, e = None, ex
+            self.after(0, done, r, e)
+        threading.Thread(target=run, daemon=True).start()
+
+    def _show_embedding(self, status, queue, error):
+        paused_setting = Settings.load().embedding_paused
+        state = status.get("state", "unknown")
+        updated = status.get("updated_utc")
+        age = None
+        if updated:
+            try:
+                age = (datetime.now(timezone.utc) - datetime.strptime(updated, "%Y-%m-%dT%H:%M:%SZ")
+                       .replace(tzinfo=timezone.utc)).total_seconds()
+            except ValueError:
+                age = None
+        label = {"running": "● Running", "paused": "Paused", "idle": "Idle - nothing waiting",
+                 "error": "Problem - retrying", "starting": "Starting"}.get(state, "Unknown")
+        if paused_setting and state != "paused":
+            label = "Pausing... (after the current batch)"
+        elif not paused_setting and state == "paused":
+            label = "Resuming..."
+        self.emb_state.set(f"Queue: {label}")
+        msg = status.get("message") or ""
+        if not status:
+            msg = "The API service has not reported yet (is ClearScreenApi running? See Dashboard)."
+        elif age is not None and age > 300 and state == "running":
+            msg = (f"No report from the API service for {self._duration(age)} - it may be stopped or working on a "
+                   "very long batch. Check Dashboard and Logs.")
+        if error:
+            msg = f"{msg}  {error}".strip()
+        self.emb_message.set(msg + (f"   (last report {updated.replace('T', ' ').rstrip('Z')} UTC)" if updated else ""))
+
+        clients = {k.lower(): v for k, v in self.store.clients().items()}
+        stats = {k.lower(): (k, v or {}) for k, v in status.get("clients", {}).items()}
+        overall = status.get("overall", {})
+        waiting = {q["ClientID"].lower(): q for q in queue}
+        selected = self.emb_tree.selection()
+        self.emb_tree.delete(*self.emb_tree.get_children())
+        total_left, total_waiting, unknown = 0.0, 0, False
+        for cid_l in [*waiting, *sorted(set(stats) - set(waiting))]:
+            q = waiting.get(cid_l)
+            cid, st = stats.get(cid_l, (q["ClientID"] if q else cid_l, {}))
+            cid = q["ClientID"] if q else cid
+            name = clients.get(cid_l, {}).get("name", "")
+            if q:
+                left = embedding_queue.estimate(q, st, overall)
+                total_waiting += q["waiting"]
+                if left is None:
+                    unknown = True
+                else:
+                    total_left += left
+                running = bool(st.get("run_started_utc")) and not st.get("finished_utc")
+                since = str(q["oldest_utc"])[:19] if q.get("oldest_utc") else ""
+                self.emb_tree.insert("", "end", iid=cid, values=(
+                    cid, name, f"{q['waiting']:,}", f"{st.get('done', 0):,}" if running else "0",
+                    self._duration(st.get("seconds")) if running else "-",
+                    f"about {self._duration(left)}" if left is not None else "estimating...", since))
+            else:
+                last = st.get("last_run") or {}
+                if not last.get("done"):
+                    continue
+                self.emb_tree.insert("", "end", iid=cid, values=(
+                    cid, name, "0", f"{last['done']:,} (finished)", self._duration(last.get("seconds")), "done",
+                    "finished " + str(last.get("finished_utc") or "")[:16].replace("T", " ")))
+        if selected and self.emb_tree.exists(selected[0]):
+            self.emb_tree.selection_set(selected[0])
+        if total_waiting:
+            self.emb_total.set(f"In total: {total_waiting:,} record(s) waiting - about {self._duration(total_left)}"
+                               f"{' or more' if unknown else ''} left at the current pace (an estimate: long "
+                               "listings take longer).")
+        else:
+            self.emb_total.set("Nothing waiting: every whitelist record is searchable.")
+
+    def refresh_waiting_records(self):
+        sel = self.emb_tree.selection()
+        cs = self.store.get("sql_connection_string")
+        if not sel or not cs:
+            return
+        cid, model = sel[0], Settings.load().embed_model
+
+        def work():
+            con = db.connect(cs)
+            try:
+                return embedding_queue.waiting_records(con, model, cid, limit=1000)
+            finally:
+                con.close()
+
+        def done(rows):
+            self.emb_records.delete(*self.emb_records.get_children())
+            for i, r in enumerate(rows):
+                self.emb_records.insert("", "end", iid=str(i), values=(
+                    r["Unique_ID"], str(r["added_utc"])[:19], f"{r['chars']:,}"))
+            order = "the first 1,000, in the order they will be embedded" if len(rows) == 1000 else \
+                "in the order they will be embedded"
+            self.emb_records_title.set(f"Waiting records of client {cid} ({order})" if rows
+                                       else f"Client {cid} has no records waiting.")
+        self.busy(f"Reading the waiting records of {cid}...", work, done)
+
+    def set_embedding_paused(self, paused: bool):
+        s = Settings.load()
+        if s.embedding_paused == paused:
+            self.status.set("The queue is already " + ("paused." if paused else "running."))
+            return
+        s.embedding_paused = paused
+        s.save()
+        self.settings = s
+        self.status.set("Queue paused - it stops after the current small batch." if paused else
+                        "Queue resumed - it continues within a few seconds.")
+        self.after(1500, self.refresh_embedding)
 
     # --------------------------------------------------------------- logs --
     def _logs(self, f):

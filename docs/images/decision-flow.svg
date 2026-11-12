@@ -17,7 +17,7 @@
   </defs>
   <rect width="980" height="640" fill="#ffffff"/>
   <rect x="300" y="14" width="300" height="46" rx="23" fill="#22324a"/>
-  <text x="450" y="43" text-anchor="middle" fill="#fff" font-size="15" font-weight="600">Alert arrives (POST /match/groq)</text>
+  <text x="450" y="43" text-anchor="middle" fill="#fff" font-size="15" font-weight="600">Alert arrives (POST /match/main)</text>
   <path class="l" d="M450,60 L450,80"/>
 
   <rect class="q" x="250" y="82" width="400" height="58" rx="8"/>
@@ -49,7 +49,7 @@
   <path class="l" d="M450,380 L450,400"/><text class="lab" x="458" y="395">yes (top 5)</text>
 
   <rect class="q" x="200" y="402" width="500" height="78" rx="8"/>
-  <text class="t" x="450" y="428" text-anchor="middle">5. AI review (Groq), one record at a time</text>
+  <text class="t" x="450" y="428" text-anchor="middle">5. AI review, one record at a time</text>
   <text class="s" x="450" y="448" text-anchor="middle">Does the analyst's reason (Analyst_Allow_Reasoning) still hold for this alert?</text>
   <text class="s" x="450" y="466" text-anchor="middle">Python then checks every fact the AI states against the data</text>
 
