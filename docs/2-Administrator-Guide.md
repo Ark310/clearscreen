@@ -58,6 +58,13 @@ no restart needed. **Test key** checks the stored key.
 
 Replace it when Groq tells you it expired, or when someone who knew it leaves.
 
+**Free or paid Groq plan.** The free plan limits how much the AI may process per minute. An alert that
+goes to the AI asks up to 5 questions, so on the free plan ClearScreen often has to wait for that
+allowance (20–80 seconds per alert, sometimes more than Cloudflare's 100-second limit). A paid plan
+removes most of the waiting and costs about 2–3 US cents per AI-reviewed alert. Upgrading is done in
+the Groq console (**Settings → Billing**) for your organization; the stored key normally keeps working
+with the higher limits. If you create a new key, set it here. Then raise **AI speed** (below).
+
 ### SQL Server connection
 
 The connection string the API uses. Passwords are always shown as `********`.
@@ -120,6 +127,19 @@ any client's key can call it; while it is off, it is hidden from `/docs` and ans
 as if it did not exist. The switch takes effect within 10 seconds, without a restart. Turn it on only
 while you test, then off again: it shows clients internal details, including which AI provider is used.
 Both endpoints make exactly the same decisions.
+
+### AI speed
+
+**AI questions at once** (1–5, default **1**) is how many of an alert's AI reviews are asked at the
+same time. Choose a number and press **Apply**: it takes effect within 10 seconds, without a restart.
+
+| Groq plan | Use | Why |
+|---|---|---|
+| Free | **1** | The free plan's per-minute allowance makes questions sent together wait anyway, and a question that runs out of retries turns the alert into a manual review (`REVIEW`) |
+| Paid | **5** | All of an alert's AI reviews run together: an AI-reviewed alert takes about as long as one AI question (about 6 seconds) instead of up to five in a row |
+
+The decisions are the same at any setting: each record is reviewed on its own, and the reviews are
+combined in the same order and by the same rules.
 
 ---
 
@@ -315,4 +335,5 @@ Logs roll over at 10 MB and the last 10 files are kept.
 | `404 NOT_FOUND` on `/match/test` | The test endpoint is switched off | Clients use `/match/main`. To test, **Settings** → **Test endpoint** → **Turn on** |
 | Cannot reach the API at all, or Cloudflare error 521 / 522 | A service is stopped, or the Cloudflare DNS record / AWS security group changed | **Dashboard** → **Restart all**; check the HTTPS log |
 | Cloudflare error 525 / 526 | Certificate problem | **Settings** → check the certificate line; replace it if expired or wrong |
-| Cloudflare error 524 | A request took over 100 seconds | Ask the client to send 1–5 alerts per request |
+| Cloudflare error 524 | A request took over 100 seconds | Ask the client to send 1–5 alerts per request. On the free Groq plan, AI-reviewed alerts often wait for the plan's per-minute allowance: consider the paid plan and **Settings** → **AI speed** |
+| Slow AI-reviewed alerts | Free Groq plan waits, or **AI questions at once** is 1 | See **Settings** → **Groq API key** and **AI speed**. In the test endpoint's result, `waited_seconds` is the time spent waiting for Groq's allowance |

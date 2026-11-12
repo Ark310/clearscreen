@@ -79,7 +79,9 @@ tools/                smoke_test.py, make_lock.py
    fields when both sides have them: name < 85% −15, DOB differs −25, country differs −10;
    entity type differs → rejected. `adjusted ≥ 80` → sent to the AI (top `ai_max_cases`).
 5. **AI review** (`ai_review.review`). One Groq call per record, so reasoning from different records
-   is never combined. The prompt gives both sides of the previous and current case, the analyst's
+   is never combined. Up to `settings.ai_parallel_calls` (Admin → Settings → AI speed; default 1)
+   calls run at the same time on a thread pool; `pool.map` keeps the candidates' order, so the
+   combined decision is identical to one-by-one (`tests/test_v15.py`). The prompt gives both sides of the previous and current case, the analyst's
    note, and Python's computed relationships (DOB, country, nationality, city, entity type, ID).
    `python_checks` then corrects any relationship the data does not support, removes reasons that
    matched in the previous case, adds contradictions Python finds (identical ID, DOB now matching,
@@ -132,7 +134,12 @@ dbo.CLS_SchemaVersion (Version, AppliedUtc)
 - The collation's case-insensitivity makes `ClientID` matching case-insensitive; the API also
   replaces a request's `ClientID` with the registered spelling.
 - A client's vectors are cached in API memory (`similarity._INDEX`) and reloaded when the count or
-  maximum `RecordKey` of its chunks changes.
+  maximum `RecordKey` of its chunks changes. When the API starts, `api._warm_indexes` loads every
+  client's index in a background thread (`similarity.warm_indexes`); a per-client lock
+  (`_BUILD_LOCKS`) makes an alert that needs an index being loaded wait for that load.
+- **An alert's own listing** is chunked the same way; a chunk whose text is already in
+  `WL_Chunk_Vectors` reuses the stored vector (`similarity.embed_chunks`), and only the other chunks
+  go to the embedding service. Read-only: alerts' vectors are not stored. `/search` does the same.
 
 ---
 
@@ -248,5 +255,5 @@ Bump `VERSION` (and `clearscreen.__version__`) for every release.
 | A caller got `INTERNAL_ERROR ref=…` | Search `api.log` for the reference: the full stack trace is there |
 | Similar records never found | Admin → **Embedding** (paused? time left?); `api.log` "embedding queue" lines; is `ClearScreenEmbed` running? |
 | `DATABASE_UNAVAILABLE` | `ops.test_connection` via Admin > Settings; is `NT SERVICE\ClearScreenApi` a user in the database? |
-| Slow AI cases | `waited_seconds` in the result = time spent on Groq's rate limit; `ai_seconds` = model time |
+| Slow AI cases | `/match/test` timings are clock time: `waited_seconds` = time waiting out Groq's per-minute limit, `ai_seconds` = the rest of the time an AI call was under way (calls that overlap count once, `matching.ai_timing`); `seconds` − both = search and checks. Free plan: keep `ai_parallel_calls` at 1 |
 | Service will not start | `logs\<Service>.err.log` and `<Service>.wrapper.log` |

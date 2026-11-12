@@ -1,5 +1,25 @@
 # ClearScreen — changes
 
+## 1.5.0 — 2026-11-12
+
+Faster AI-reviewed alerts. No change to decisions, to the database, or to what `/match/main` returns.
+
+- **AI questions at the same time.** New setting Admin → Settings → *AI speed* → **AI questions at
+  once** (1–5, default 1 = one after another, as before). On a paid Groq plan set it to 5: an alert's
+  up-to-5 AI reviews then run together, so the AI step takes about as long as one question. Each
+  record is still reviewed on its own and the reviews are combined exactly as before. Keep 1 on the
+  free plan. Applies within 10 seconds, no restart.
+- **Stored embeddings reused.** Parts of an alert's listing that are already embedded (the same text
+  in a whitelisted record) reuse the stored vector instead of being embedded again on the CPU.
+- **Search data loaded at start-up.** After a restart or upgrade the API loads every client's search
+  data in the background, instead of the first AI-path alert doing it (about 30 seconds for 20,000
+  records). An alert that arrives during the load waits for it rather than starting a second one.
+- `/match/test` timings are clock time: when AI calls overlap, `ai_seconds` and `waited_seconds`
+  count overlapping time once, so `seconds` − `ai_seconds` − `waited_seconds` is still the search and
+  checks.
+- Docs: Administrator Guide (Groq plan, AI speed, troubleshooting), Developer and Installation
+  Guides. The Integration Guide is unchanged.
+
 ## 1.4.1 — 2026-11-12
 
 - Fixed: an upgrade stopped at step 1 with "C: needs at least 3 GB free" although nothing was to be
