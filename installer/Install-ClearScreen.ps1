@@ -241,15 +241,24 @@ function Resolve-Locations {
 
 function Get-FreeGB($path) { return (Get-PSDrive ((Split-Path $path -Qualifier).TrimEnd(":"))).Free / 1GB }
 
+function Get-SsmsExe {
+    # Where SSMS is installed already (the path setup recorded, ClearScreen's own folder, the default), or $null.
+    $known = (Get-ItemProperty $Reg -ErrorAction SilentlyContinue).SsmsExe
+    $default = Join-Path $env:ProgramFiles "Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Ssms.exe"
+    $own = if ($Root) { Join-Path $Root "SSMS\Common7\IDE\Ssms.exe" } else { $null }
+    foreach ($candidate in @($known, $own, $default)) {
+        if ($candidate -and (Test-Path $candidate)) { return $candidate }
+    }
+    return $null
+}
+
 function Install-Ssms {
     $exe = if ($Root) { Join-Path $Root "SSMS\Common7\IDE\Ssms.exe" }
            else { Join-Path $env:ProgramFiles "Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Ssms.exe" }
-    $known = (Get-ItemProperty $Reg -ErrorAction SilentlyContinue).SsmsExe
-    foreach ($candidate in @($known, $exe, (Join-Path $env:ProgramFiles "Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Ssms.exe"))) {
-        if ($candidate -and (Test-Path $candidate)) {
-            Set-ItemProperty $Reg SsmsExe $candidate
-            Good "already installed ($candidate)"; return
-        }
+    $found = Get-SsmsExe
+    if ($found) {
+        Set-ItemProperty $Reg SsmsExe $found
+        Good "already installed ($found)"; return
     }
     $boot = Get-Verified "SQL Server Management Studio installer" $C.Ssms
     Info "downloading and installing SSMS 22 from Microsoft - about 10-20 minutes, please wait..."
@@ -499,8 +508,10 @@ try {
     if ($TlsCertFile -and -not $TlsKeyFile) { Fail "-TlsKeyFile is needed with -TlsCertFile." }
 
     # Disk space: on the ClearScreen drive, and on C: (Windows keeps some SQL Server / SSMS files there regardless).
-    $needRoot = 12 + $(if ($doSqlInstall) { 10 } else { 0 }) + $(if (-not $NoSsms) { 6 } else { 0 })
-    $needSys = 1 + $(if ($doSqlInstall) { 3 } else { 0 }) + $(if (-not $NoSsms) { 2 } else { 0 })
+    # Only what this run will actually install counts: an upgrade with SQL Server and SSMS in place needs little.
+    $doSsmsInstall = (-not $NoSsms) -and -not (Get-SsmsExe)
+    $needRoot = 12 + $(if ($doSqlInstall) { 10 } else { 0 }) + $(if ($doSsmsInstall) { 6 } else { 0 })
+    $needSys = 1 + $(if ($doSqlInstall) { 3 } else { 0 }) + $(if ($doSsmsInstall) { 2 } else { 0 })
     $rootDrive = Split-Path $Install -Qualifier
     if ($rootDrive -eq $env:SystemDrive) { $needRoot += $needSys; $needSys = 0 }
     $freeRoot = Get-FreeGB $Install

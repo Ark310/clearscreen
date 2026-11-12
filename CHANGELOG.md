@@ -1,5 +1,13 @@
 # ClearScreen — changes
 
+## 1.4.1 — 2026-11-12
+
+- Fixed: an upgrade stopped at step 1 with "C: needs at least 3 GB free" although nothing was to be
+  installed on C:. The disk-space check reserved room for SQL Server Management Studio even when it
+  was already installed. It now counts only what this run will actually install (SQL Server, SSMS),
+  so an upgrade on a server that has both needs 1 GB free on C:.
+- Everything else as in 1.4.0.
+
 ## 1.4.0 — 2026-11-12
 
 **Two match endpoints: `/match/main` for clients, `/match/test` for you**
