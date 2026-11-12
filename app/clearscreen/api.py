@@ -71,7 +71,8 @@ class State:
         return similarity.Gateway2Config(embed_model=s.embed_model, ollama_url=s.embed_url)
 
     def ai_cfg(self) -> ai_review.AIReviewConfig:
-        return ai_review.AIReviewConfig(max_cases=self.settings.ai_max_cases)
+        s = self.settings
+        return ai_review.AIReviewConfig(max_cases=s.ai_max_cases, parallel=min(10, max(1, int(s.ai_parallel_calls or 1))))
 
     def groq_cfg(self) -> groq_client.GroqConfig:
         s = self.settings
@@ -115,10 +116,35 @@ def _embed_worker():
     EmbeddingWorker(STATE.connect, STATE.sim_cfg, _stop).run(lambda: STATE.settings.embed_worker_seconds)
 
 
+def _warm_indexes():
+    """Load every client's search index into memory in the background at start-up, so the first
+    alert after a restart does not have to. The API answers meanwhile; an alert that needs an index
+    still being loaded waits for that load (similarity.client_index) instead of starting another."""
+    started = time.time()
+    for attempt in range(10):                    # SQL Server may still be starting with the machine
+        try:
+            con = STATE.connect()
+            break
+        except ServiceError:
+            if _stop.wait(30):
+                return
+    else:
+        log.warning("search indexes not preloaded: the database was not reachable")
+        return
+    try:
+        done = similarity.warm_indexes(con, STATE.sim_cfg(), log)
+        log.info("search indexes preloaded: %s clients in %.1f s", len(done), time.time() - started)
+    except Exception as e:                                        # noqa: BLE001 -- alerts load it themselves
+        log.warning("search indexes not preloaded: %s", type(e).__name__)
+    finally:
+        con.close()
+
+
 @asynccontextmanager
 async def lifespan(app):
     _setup_logging()
     log.info("%s %s starting", PRODUCT, __version__)
+    threading.Thread(target=_warm_indexes, name="index-warmup", daemon=True).start()
     worker = threading.Thread(target=_embed_worker, name="embed-worker", daemon=True)
     worker.start()
     yield

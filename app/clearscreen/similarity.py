@@ -24,6 +24,7 @@ app/gateway2.py, copied verbatim; only storage is new.
 import hashlib
 import re
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -229,6 +230,7 @@ def embed_missing(con, embed, cfg: Gateway2Config, client_id=None, batch=64, pro
 
 _INDEX: dict = {}       # (model, client) -> (stamp, ClientIndex)
 _INDEX_LOCK = threading.Lock()
+_BUILD_LOCKS: dict = {}  # (model, client) -> Lock: one load of a client's index at a time (warm-up vs an alert)
 
 
 @dataclass
@@ -288,10 +290,19 @@ def client_index(con, cfg: Gateway2Config, client_id) -> ClientIndex:
     """One client's chunk vectors, kept in memory until that client's embeddings change. When
     records were only ADDED since (the background worker embedding new records), the kept index
     is extended with just the new ones instead of reading every vector again; a checksum over the
-    kept part proves it is unchanged. Anything else (records replaced or removed) rebuilds it."""
+    kept part proves it is unchanged. Anything else (records replaced or removed) rebuilds it.
+    Only one thread loads a client's index at a time: an alert that arrives while the start-up
+    warm-up (warm_indexes) is loading it waits and then uses that result."""
+    key = (cfg.embed_model, client_id.lower())
+    with _INDEX_LOCK:
+        build_lock = _BUILD_LOCKS.setdefault(key, threading.Lock())
+    with build_lock:
+        return _client_index(con, cfg, client_id, key)
+
+
+def _client_index(con, cfg: Gateway2Config, client_id, key) -> ClientIndex:
     cur = con.cursor()
     stamp = tuple(cur.execute(_STAMP, cfg.embed_model, client_id).fetchone())
-    key = (cfg.embed_model, client_id.lower())
     with _INDEX_LOCK:
         kept = _INDEX.get(key)
     if kept and kept[0] == stamp:
@@ -319,6 +330,40 @@ def client_index(con, cfg: Gateway2Config, client_id) -> ClientIndex:
     with _INDEX_LOCK:
         _INDEX[key] = (stamp, index)
     return index
+
+
+def embed_chunks(con, cfg: Gateway2Config, chunks: list[str], embed) -> np.ndarray:
+    """Unit vectors of `chunks`, in order. A piece of text that is already in WL_Chunk_Vectors
+    (the same text in a whitelisted record) reuses its stored vector - the same text always gives
+    the same vector - and only the rest is sent to the embedding service. Read-only: an alert's
+    own vectors are not stored. If the lookup fails, everything is embedded as before."""
+    if not chunks:
+        return _unit(embed(chunks))
+    hashes = [_hash(c) for c in chunks]
+    try:
+        stored = _vectors_for(con.cursor(), cfg.embed_model, sorted(set(hashes)))
+    except Exception:                                         # noqa: BLE001 -- reuse is only a shortcut
+        stored = {}
+    todo = list(dict.fromkeys(h for h in hashes if h not in stored))
+    if todo:
+        text = dict(zip(hashes, chunks))
+        stored.update(zip(todo, _unit(embed([text[h] for h in todo]))))
+    return np.stack([np.asarray(stored[h], dtype=np.float32) for h in hashes])
+
+
+def warm_indexes(con, cfg: Gateway2Config, log=None) -> dict:
+    """Load every client's index into memory now (the API calls this in the background when it
+    starts), so the first alert after a restart does not wait for it. Returns {client: records}."""
+    clients = [r[0] for r in con.cursor().execute(
+        "SELECT DISTINCT r.ClientID " + _CHUNKS_OF_CLIENT.replace("r.ClientID = ?", "1 = 1"), cfg.embed_model).fetchall()]
+    done = {}
+    for client in clients:
+        started = time.time()
+        done[client] = len(client_index(con, cfg, client).wl_ids)
+        if log:
+            log.info("search index of client %s loaded: %s records in %.1f s", client, done[client],
+                     time.time() - started)
+    return done
 
 
 def payload_similarities(current: np.ndarray, index: ClientIndex) -> np.ndarray:
@@ -503,7 +548,7 @@ def find_candidates(alert: dict, con, cfg: Gateway2Config | None = None, embed=N
         return dict(send_to_ai=False, threshold=cfg.ai_threshold, compared=0, candidates=[], near_misses=[])
     embed = embed or ollama_embedder(cfg)
     with ALERTS_FIRST.alert():                        # the background worker steps aside meanwhile
-        current = _unit(embed(chunk_payload(alert["Matched_Payload"], cfg.chunk_max_chars)))
+        current = embed_chunks(con, cfg, chunk_payload(alert["Matched_Payload"], cfg.chunk_max_chars), embed)
         index = client_index(con, cfg, client)
     sims = payload_similarities(current, index)
     # Penalties only lower the score, so a record below the threshold on payload alone can never be
@@ -523,7 +568,7 @@ def find_candidates(alert: dict, con, cfg: Gateway2Config | None = None, embed=N
 def search(con, cfg: Gateway2Config, client_id: str, text: str, k: int = 10, embed=None) -> list[dict]:
     """The client's whitelisted records whose listing is most similar to free text (GET /search)."""
     embed = embed or ollama_embedder(cfg)
-    current = _unit(embed([text]))
+    current = embed_chunks(con, cfg, [text], embed)
     index = client_index(con, cfg, client_id)
     sims = payload_similarities(current, index)
     top = np.argsort(-sims, kind="stable")[:k]

@@ -66,6 +66,8 @@ class Settings:
     groq_model: str = "qwen/qwen3.8-27b"
     groq_reasoning_effort: str = "high"
     ai_max_cases: int = 5                      # most similar whitelist records the AI reviews per alert
+    ai_parallel_calls: int = 1                 # AI questions sent at the same time per alert (1 = one by one;
+                                               # raise only on a paid AI plan - Admin > Settings > AI speed)
     rate_limit_per_minute: int = 120           # requests per client per minute
     max_request_mb: int = 100                  # largest request body accepted
     max_match_batch: int = 500                 # alerts per /match request

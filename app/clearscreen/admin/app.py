@@ -385,9 +385,33 @@ class AdminApp(tk.Tk):
         ttk.Label(f, textvariable=self.test_state, wraplength=560).grid(row=14, column=1, sticky="w")
         self.test_button = ttk.Button(f, command=self.toggle_test_endpoint)
         self.test_button.grid(row=14, column=2, padx=4, sticky="n")
+
+        ttk.Separator(f).grid(row=15, column=0, columnspan=4, sticky="ew", pady=10)
+        ttk.Label(f, text="AI speed", style="H.TLabel").grid(row=16, column=0, sticky="nw")
+        speed = ttk.Frame(f)
+        speed.grid(row=16, column=1, sticky="w")
+        ttk.Label(speed, text="AI questions at once").pack(side="left")
+        self.parallel_var = tk.StringVar(value=str(s.ai_parallel_calls))
+        ttk.Combobox(speed, textvariable=self.parallel_var, values=[str(n) for n in range(1, 6)], width=4,
+                     state="readonly").pack(side="left", padx=6)
+        ttk.Button(speed, text="Apply", command=self.save_ai_parallel).pack(side="left")
+        ttk.Label(f, text="How many of an alert's AI reviews are asked at the same time. 1 = one after another "
+                          "(use this on a free AI plan: its per-minute limit makes questions sent together wait, "
+                          "and a question that runs out of retries turns the alert into a manual review). "
+                          "On a paid plan, 5 makes AI-reviewed alerts several times faster. Decisions are the "
+                          "same either way. Applies within 10 seconds, no restart.",
+                  style="Muted.TLabel", wraplength=560).grid(row=17, column=1, columnspan=3, sticky="w")
         f.columnconfigure(1, weight=1)
         self.refresh_secret_state()
         self.refresh_test_endpoint()
+
+    def save_ai_parallel(self):
+        s = Settings.load()
+        s.ai_parallel_calls = min(5, max(1, int(self.parallel_var.get() or 1)))
+        s.save()
+        self.settings = s
+        self.status.set(f"AI questions at once set to {s.ai_parallel_calls} - takes effect within 10 seconds, "
+                        "no restart needed.")
 
     def refresh_test_endpoint(self):
         on = Settings.load().test_endpoint_enabled

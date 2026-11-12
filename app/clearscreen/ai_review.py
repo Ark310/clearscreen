@@ -20,6 +20,7 @@ the overall decision into the alert's disposition (app/gateway1.py).
 """
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Literal
 
@@ -50,6 +51,7 @@ class AIReviewConfig:
     num_ctx: int = 8192
     timeout_s: float = 180.0
     max_cases: int = 5                  # most previous cases reviewed per alert (best first)
+    parallel: int = 1                   # previous cases reviewed at the same time (1 = one after another)
     ollama_url: str = "http://127.0.0.1:11434"
     retries: int = 1                    # extra attempts when the reply is not valid JSON
 
@@ -393,10 +395,18 @@ def review(current: dict, candidates: list[dict], *, cfg: AIReviewConfig | None 
     """current: the alert (wl_db.to_alert; Analyst_Remarks is the current case note, if any).
     candidates: [{"previous": a whitelisted record (wl_db.to_alert), "retrieval": its Gateway 2 result}],
     best first.
-    Each previous case is reviewed on its own."""
+    Each previous case is reviewed on its own, so up to cfg.parallel of them are asked at the same
+    time; the reviews keep the candidates' order, and they are combined exactly as when asked one by
+    one. A provider's usage limit (AIProviderLimit) still propagates."""
     cfg = cfg or AIReviewConfig()
     chat = chat or ollama_chat(cfg)
-    reviews = [review_one(current, c["previous"], c["retrieval"], chat, cfg) for c in candidates[:cfg.max_cases]]
+    todo = candidates[:cfg.max_cases]
+    workers = max(1, min(int(cfg.parallel or 1), len(todo)))
+    if workers == 1:
+        reviews = [review_one(current, c["previous"], c["retrieval"], chat, cfg) for c in todo]
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ai-review") as pool:
+            reviews = list(pool.map(lambda c: review_one(current, c["previous"], c["retrieval"], chat, cfg), todo))
     decisions = {r["decision"] for r in reviews}
     applicable = sorted((r for r in reviews if r["decision"] == APPLICABLE),
                         key=lambda r: r.get("confidence") or 0, reverse=True)

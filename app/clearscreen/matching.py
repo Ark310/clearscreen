@@ -58,24 +58,47 @@ def _reasoning_of(con, client_id, unique_id):
     return rec["Analyst_Allow_Reasoning"] if rec else None
 
 
+def _covered(spans) -> float:
+    """Seconds covered by at least one of the (start, end) spans: overlapping time counts once."""
+    total, end = 0.0, None
+    for a, b in sorted(spans):
+        if end is None or a > end:
+            total, end = total + (b - a), b
+        elif b > end:
+            total, end = total + (b - end), b
+    return total
+
+
+def ai_timing(calls: list[dict], spans: list[tuple]) -> tuple[float, float]:
+    """(waited_seconds, ai_seconds) of an alert's AI step, as clock time: when questions run at the
+    same time, time they overlap counts once. waited = time spent waiting out the AI provider's
+    per-minute limit; ai = the rest of the time an AI call was under way."""
+    waits = [w for c in calls for w in (c.get("waits") or [])]
+    waited = _covered(waits) + sum(c.get("waited_s") or 0 for c in calls if "waits" not in c)
+    return waited, max(0.0, _covered(spans) - _covered(waits))
+
+
 def match_alert(request: dict, con, *, chat, model: str, sim_cfg=None, ai_cfg=None, embed=None) -> MatchResult:
     """request: a MatchRequest as a dict (the client's column names)."""
     started = time.time()
     alert = db.to_alert(request)
-    calls = []
+    calls, spans = [], []           # spans: (start, end) of every AI call, waits included
 
-    def timed_chat(system, user):
-        content, info = chat(system, user)
-        calls.append(info)
-        return content, info
+    def timed_chat(system, user):   # may run on several threads at once (AIReviewConfig.parallel)
+        t0 = time.time()
+        try:
+            content, info = chat(system, user)
+            calls.append(info)
+            return content, info
+        finally:
+            spans.append((t0, time.time()))
 
     def result(disposition, rule, confidence, explanation, **kw):
-        ai_s = sum(c.get("total_s") or 0 for c in calls)
+        waited, ai_s = ai_timing(calls, spans)
         return MatchResult(
             ClientID=alert["ClientID"], Unique_ID=alert["Source_ID"], disposition=disposition, rule=rule,
             confidence=round(confidence, 2), model=model, explanation=explanation, ai_calls=len(calls),
-            seconds=round(time.time() - started, 2), ai_seconds=round(ai_s, 2),
-            waited_seconds=round(sum(c.get("waited_s") or 0 for c in calls), 1),
+            seconds=round(time.time() - started, 2), ai_seconds=round(ai_s, 2), waited_seconds=round(waited, 1),
             cost_usd=round(sum(c.get("cost_usd") or 0 for c in calls), 5), **kw)
 
     repeats = exact_repeats(con, alert)

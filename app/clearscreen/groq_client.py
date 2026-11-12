@@ -74,7 +74,7 @@ def groq_chat(store, cfg: GroqConfig | None = None, post=None):
     post = post or httpx.post
 
     def chat(system, user):
-        waited = 0.0
+        waited, waits = 0.0, []
         for _ in range(cfg.max_attempts):
             started = time.time()
             r = post(cfg.url, timeout=cfg.timeout_s, headers={"Authorization": f"Bearer {key}"},
@@ -89,7 +89,9 @@ def groq_chat(store, cfg: GroqConfig | None = None, post=None):
             wait = float(r.headers.get("retry-after") or 20)
             if wait > cfg.max_wait_s or "per day" in r.text.lower():
                 raise GroqLimitReached(f"Groq limit reached (Groq says retry in {wait / 60:.0f} min)")
+            slept = time.time()
             time.sleep(wait + 1)
+            waits.append((slept, time.time()))
             waited += wait + 1
         else:
             raise GroqLimitReached("Groq limit reached (still limited after waiting)")
@@ -100,7 +102,7 @@ def groq_chat(store, cfg: GroqConfig | None = None, post=None):
             raise RuntimeError("Groq answer cut off at the output limit")
         u = data.get("usage") or {}
         return data["choices"][0]["message"]["content"], dict(
-            model=cfg.model, total_s=round(wall, 2), waited_s=round(waited, 1),
+            model=cfg.model, total_s=round(wall, 2), waited_s=round(waited, 1), waits=waits,
             prompt_tokens=u.get("prompt_tokens") or 0, output_tokens=u.get("completion_tokens") or 0,
             cost_usd=((u.get("prompt_tokens") or 0) * cfg.price_in + (u.get("completion_tokens") or 0) * cfg.price_out) / 1e6)
     return chat
