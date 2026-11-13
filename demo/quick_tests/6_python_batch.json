@@ -1,0 +1,38 @@
+[
+  {
+    "ClientID": "001",
+    "Unique_ID": "TEST-ALERT-PY-02",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "CASIMIR ODUYA LINDQVIST,9 BIRCHGROVE LANE,CANADA,CALGARY,T2N 1N4,ALBERTA",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 9:00:00 AM",
+    "Matched_Details": "Entity Name: Casimir Oduya Lindqvist Reference No.:99000103 Notes:2022 customs evasion report. Address Information ---------- Street 1: Plot 9 Kisiwa Road City: Mombasa Country: Kenya Additional Information ---------- DOB: 1960-09-30 ---------- Nationality: Kenya"
+  },
+  {
+    "ClientID": "001",
+    "Unique_ID": "TEST-ALERT-PY-03",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "PERPETUA ARNWALD SOKOLOVA,1550 RUE SAINT-DENIS,CANADA,MONTREAL,H2X 3K2,QUEBEC",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 9:00:00 AM",
+    "Matched_Details": "Entity Name: Perpetua Arnwald Sokolova Reference No.:99000104 Notes:PEP: customs official 2015-2021. Address Information ---------- Street 1: ul. Portowa 3 City: Gdynia Country: Poland Additional Information ---------- DOB: 1958-12-11 ---------- Nationality: Poland"
+  },
+  {
+    "ClientID": "001",
+    "Unique_ID": "TEST-ALERT-PY-04",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "BARTLEY VANCE-OYELARAN,73 HARBOURVIEW DR,CANADA,VICTORIA,V8V 1A1,BRITISH COLUMBIA",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 3:35:00 PM",
+    "Matched_Details": "Entity Name: Bartholomew Vane Reference No.:99000105 Notes:2021 counterfeit goods conviction. Address Information ---------- Street 1: 22 Quay Lane City: Hull Country: United Kingdom Additional Information ---------- DOB: 1970-03-03 ---------- Nationality: United Kingdom"
+  },
+  {
+    "ClientID": "001",
+    "Unique_ID": "TEST-ALERT-PY-05",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "ODALYS FENWICK-ARAUJO,5 WILLOW CT,CANADA,REGINA,S4P 3Y2,SASKATCHEWAN",
+    "Database_Screened": "OSFI COUNTRY.CDF",
+    "Screened_Date": "11/12/2026 3:36:00 PM",
+    "Matched_Details": "Entity Details NOT AVAILABLE"
+  }
+]

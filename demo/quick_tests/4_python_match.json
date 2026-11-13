@@ -1,0 +1,11 @@
+[
+  {
+    "ClientID": "001",
+    "Unique_ID": "TEST-ALERT-PY-01",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "YSOLDE BRANNIGAN-FERREIRA,412 CEDARVALE AVE,CANADA,TORONTO,M6C 3A1,ONTARIO",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 9:00:00 AM",
+    "Matched_Details": "Entity Name: Ysolde Brannigan-Ferreira Reference No.:99000102 Notes:2023 sanctions designation. Address Information ---------- Street 1: Avenida Litoral 220 City: Mindelo Country: Cabo Verde Additional Information ---------- DOB: 1947-01-15 ---------- Nationality: Cabo Verde"
+  }
+]

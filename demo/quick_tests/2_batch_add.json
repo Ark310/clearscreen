@@ -1,0 +1,32 @@
+[
+  {
+    "ClientID": "001",
+    "Unique_ID": "TEST-WL-0002",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "YSOLDE BRANNIGAN-FERREIRA,412 CEDARVALE AVE,CANADA,TORONTO,M6C 3A1,ONTARIO",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 9:00:00 AM",
+    "Matched_Details": "Entity Name: Ysolde Brannigan-Ferreira Reference No.:99000102 Notes:2023 sanctions designation. Address Information ---------- Street 1: Avenida Litoral 220 City: Mindelo Country: Cabo Verde Additional Information ---------- DOB: 1947-01-15 ---------- Nationality: Cabo Verde",
+    "Analyst_Allow_Reasoning": "Customer born 1992, Canadian. Listed person born 1947, Cabo Verde national. Not a match."
+  },
+  {
+    "ClientID": "001",
+    "Unique_ID": "TEST-WL-0003",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "CASIMIR ODUYA LINDQVIST,9 BIRCHGROVE LANE,CANADA,CALGARY,T2N 1N4,ALBERTA",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 9:00:00 AM",
+    "Matched_Details": "Entity Name: Casimir Oduya Lindqvist Reference No.:99000103 Notes:2022 customs evasion report. Address Information ---------- Street 1: Plot 9 Kisiwa Road City: Mombasa Country: Kenya Additional Information ---------- DOB: 1960-09-30 ---------- Nationality: Kenya",
+    "Analyst_Allow_Reasoning": "Customer born 1985, lives in Calgary. Listed person born 1960, Kenyan national. Not a match."
+  },
+  {
+    "ClientID": "001",
+    "Unique_ID": "TEST-WL-0004",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "PERPETUA ARNWALD SOKOLOVA,1550 RUE SAINT-DENIS,CANADA,MONTREAL,H2X 3K2,QUEBEC",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 9:00:00 AM",
+    "Matched_Details": "Entity Name: Perpetua Arnwald Sokolova Reference No.:99000104 Notes:PEP: customs official 2015-2021. Address Information ---------- Street 1: ul. Portowa 3 City: Gdynia Country: Poland Additional Information ---------- DOB: 1958-12-11 ---------- Nationality: Poland",
+    "Analyst_Allow_Reasoning": "Customer born 1999, student in Montreal. Listed person born 1958, Polish official. Not a match."
+  }
+]
