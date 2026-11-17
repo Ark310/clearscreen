@@ -381,7 +381,6 @@ confirm the analyst's reason with the data in the alert. The `explanation` says 
 **What does ClearScreen store?** Only the whitelist records you send to `/whitelist/add`. Alerts sent
 to `/match/main` are not stored; the access log records only who called, when, and the result code.
 
-**Is our data sent outside ClearScreen?** For alerts that reach the AI review step (step 5), the
-alert and the similar whitelist records (including `Analyst_Allow_Reasoning`) are sent over encrypted
-HTTPS to an external AI service for the review. Alerts decided in steps 1–4 are not sent anywhere.
-Your ClearScreen administrator can tell you more about the AI service and its data terms.
+**Which AI service does the review use?** The AI review step (step 5) uses a configurable hosted LLM
+provider (Groq, as tested), called over encrypted HTTPS. Alerts decided in steps 1–4 do not use the AI
+review. Your ClearScreen administrator can tell you which provider your installation uses and its terms.

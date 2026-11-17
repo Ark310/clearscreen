@@ -14,7 +14,7 @@
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-uvicorn-009688?logo=fastapi&logoColor=white)
 ![SQL Server](https://img.shields.io/badge/SQL%20Server-2022-CC2927?logo=microsoftsqlserver&logoColor=white)
-![Groq](https://img.shields.io/badge/LLM-Groq%20qwen3.8--27b-F55036)
+![LLM](https://img.shields.io/badge/LLM-configurable%20hosted%20(Groq%20as%20tested)-F55036)
 ![Embeddings](https://img.shields.io/badge/embeddings-bge--m3%20(Ollama%2C%20CPU)-000000)
 ![Cloudflare](https://img.shields.io/badge/Cloudflare-Full%20(strict)-F38020?logo=cloudflare&logoColor=white)
 ![AWS](https://img.shields.io/badge/AWS-EC2%20Windows%20Server-FF9900?logo=amazonaws&logoColor=white)
@@ -54,8 +54,9 @@ records. Alerts are not stored. The client's own system keeps the decision recor
 - **Similar-case search.** The listing is cut into chunks and embedded with bge-m3. Each chunk is
   stored once, keyed by SHA-1. The similarity is computed in both directions, with penalties when
   the name, DOB or country differs. If the entity types differ, the record is rejected.
-- **Per-record AI review, fact-checked by Python.** The AI reviews up to 5 similar whitelisted
-  records, one call per record, using a strict JSON schema (temperature 0). Python then corrects
+- **Per-record AI review, fact-checked by Python.** The AI review uses a configurable hosted LLM
+  provider (Groq, as tested). It reviews up to 5 similar whitelisted records, one call per
+  record, using a strict JSON schema (temperature 0). Python then corrects
   any relationship the data does not support. It also removes reasons that already matched last
   time and adds contradictions it finds, such as an identical ID or a DOB that now matches. A
   reason it cannot confirm is downgraded to MANUAL. If the records disagree, the alert goes to
@@ -82,7 +83,7 @@ records. Alerts are not stored. The client's own system keeps the decision recor
 | API | Python 3.13, FastAPI, uvicorn, pydantic |
 | Matching | rapidfuzz (Jaro-Winkler), numpy, frozen POC scoring engine + LexisNexis listing parser |
 | Embeddings | bge-m3 on Ollama, CPU only, `127.0.0.1:11434` |
-| LLM | Groq Cloud `qwen/qwen3.8-27b`, reasoning effort high, temperature 0, strict JSON schema |
+| LLM | Configurable hosted LLM provider (Groq `qwen/qwen3.8-27b`, as tested), reasoning effort high, temperature 0, strict JSON schema |
 | Database | SQL Server 2022 via pyodbc + ODBC Driver 18 (`WL_Records`, `WL_Chunk_Vectors`, `WL_Payload_Chunks`) |
 | HTTPS | Caddy 2.11 with a Cloudflare Origin Certificate (PEM or .pfx), or Let's Encrypt |
 | Services | WinSW 2.12, three Windows services under virtual service accounts |
@@ -115,12 +116,12 @@ flowchart LR
         ADMIN["Admin app (tkinter)<br/>clients, keys, settings, data,<br/>embedding queue, logs"]
         INST["Installer (Setup.cmd)<br/>pinned + signature-checked downloads,<br/>pip --require-hashes"]
     end
-    GROQ["Groq Cloud<br/>qwen3.8-27b"]
+    GROQ["Hosted LLM provider<br/>configurable (Groq, as tested)"]
 
     CA & CB -->|HTTPS| CF --> FW --> CADDY --> AUTH --> FLOW
     FLOW -->|score ≥ 0.80| SIM
     SIM -->|similar ≥ 80| AIR
-    AIR -->|one call per precedent| GROQ
+    AIR -->|AI review call| GROQ
     SIM --> EMB
     SIM <--> SQL
     AUTH --- SEC
@@ -260,7 +261,7 @@ a proof of concept that ran entirely offline on one workstation (July to October
 | Goal | Can an LLM help adjudicate screening alerts? | A service clients call in production |
 | Data model | LexisNexis export columns, one team's history | Each client's own whitelist (`ClientID`, `Unique_ID`, analyst reasoning), isolated per key |
 | Retrieval | Chroma RAG corpus, then SQLite history | bge-m3 chunk vectors in SQL Server, in-memory per-client index |
-| LLM | Local Qwen3 8B, then gpt-oss 20B on Ollama | Groq `qwen3.8-27b` (picked after side-by-side tests), provider abstracted |
+| LLM | Local Qwen3 8B, then gpt-oss 20B on Ollama | Configurable hosted LLM provider (Groq `qwen3.8-27b`, as tested; picked after side-by-side tests) |
 | Role of the LLM | Judge the alert from similar precedents | Answer one narrow question per precedent ("does the analyst's reason still hold?"), checked fact by fact by Python |
 | Hosting | Local GPU workstation, .NET reverse proxy on IIS | AWS EC2 Windows Server, Caddy + Cloudflare, WinSW services, one-click installer |
 | Kept unchanged | | The scoring engine and LexisNexis parser, copied verbatim and frozen |
@@ -299,7 +300,7 @@ Designed and built by Abdul Raqeeb Khatri, with Claude Code and Codex as AI pair
 | Metric | Value |
 |---|---|
 | Releases | 9 (1.0.0 → 1.5.0) in 9 days (2026-11-04 → 2026-11-12) |
-| Commits in this repo | 30: 28 reconstructed from the release packages and demo kit, plus 2 portfolio commits |
+| Commits in this repo | 31: 28 reconstructed from the release packages and demo kit, plus 3 portfolio commits |
 | Code | ~4,250 lines of application code, ~2,300 lines of frozen scoring engine, ~1,150 lines of tests, ~870 lines of installer PowerShell, ~1,300 lines of guides |
 | Tests | 84 pytest test functions + an end-to-end smoke test |
 

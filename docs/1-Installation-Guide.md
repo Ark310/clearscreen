@@ -18,7 +18,7 @@ One run of **Setup.cmd** installs and configures everything on a single Windows 
 | **SQL Server 2022** | Stores the whitelist records. Setup installs the free Developer edition if the server has no SQL Server | No — this server only (network access is switched off) |
 | **ClearScreen Admin** | Desktop app to manage clients, keys and settings | No — runs on the server only |
 
-The AI review itself runs on **Groq Cloud** over HTTPS. No AI model runs on the server.
+The AI review uses a **configurable hosted LLM provider** (Groq, as tested), called over HTTPS. No AI model runs on the server.
 
 Clients reach the server **through Cloudflare**: they connect to Cloudflare with Cloudflare's public
 certificate, and Cloudflare connects to the server with the **origin certificate** installed on it.

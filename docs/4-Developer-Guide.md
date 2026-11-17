@@ -14,7 +14,7 @@
 | API | Python 3.13, FastAPI, uvicorn | `NT SERVICE\ClearScreenApi` | 127.0.0.1:8000 |
 | Embedding service | Ollama 0.40 + bge-m3, CPU only | `NT SERVICE\ClearScreenEmbed` | 127.0.0.1:11434 |
 | Database | SQL Server 2022 (ODBC Driver 18, pyodbc); setup installs Developer edition if none | `NT Service\MSSQLSERVER` | shared memory only (TCP and named pipes off) when setup installed it |
-| AI review | Groq Cloud, `qwen/qwen3.8-27b`, strict JSON schema | — | HTTPS out |
+| AI review | Configurable hosted LLM provider (Groq `qwen/qwen3.8-27b`, as tested), strict JSON schema | — | HTTPS out |
 | Admin app | Python tkinter (opens SSMS 22 for raw data) | the signed-in administrator | — |
 
 **Locations.** Setup installs under `<drive>\ClearScreen` (default D:): `Program`, `Data`, `SQLServer`,
@@ -78,11 +78,11 @@ tools/                smoke_test.py, make_lock.py
    its best chunk on the other side, both directions, averaged (0–100). Penalties on our customer's
    fields when both sides have them: name < 85% −15, DOB differs −25, country differs −10;
    entity type differs → rejected. `adjusted ≥ 80` → sent to the AI (top `ai_max_cases`).
-5. **AI review** (`ai_review.review`). One Groq call per record, so reasoning from different records
+5. **AI review** (`ai_review.review`). One LLM call per record, so reasoning from different records
    is never combined. Up to `settings.ai_parallel_calls` (Admin → Settings → AI speed; default 1)
    calls run at the same time on a thread pool; `pool.map` keeps the candidates' order, so the
-   combined decision is identical to one-by-one (`tests/test_v15.py`). The prompt gives both sides of the previous and current case, the analyst's
-   note, and Python's computed relationships (DOB, country, nationality, city, entity type, ID).
+   combined decision is identical to one-by-one (`tests/test_v15.py`). The prompt asks one narrow question about one record (does the analyst's reason still
+   hold?), with Python's computed relationships (DOB, country, nationality, city, entity type, ID).
    `python_checks` then corrects any relationship the data does not support, removes reasons that
    matched in the previous case, adds contradictions Python finds (identical ID, DOB now matching,
    entity type changed), and downgrades APPLICABLE to MANUAL when a reason cannot be confirmed or
