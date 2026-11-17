@@ -28,7 +28,10 @@ def fake_embed(texts):
 def sql():
     """An empty ClearScreen schema in the test database."""
     from clearscreen import db, similarity
-    con = db.connect(TEST_SQL)
+    try:
+        con = db.connect(TEST_SQL)
+    except Exception as e:                        # no local SQL Server test database: skip, don't error
+        pytest.skip(f"SQL Server test database not reachable ({type(e).__name__}); set CLS_TEST_SQL")
     db.create_schema(con)
     cur = con.cursor()
     for t in ("WL_Payload_Chunks", "WL_Chunk_Vectors", "WL_Records"):
