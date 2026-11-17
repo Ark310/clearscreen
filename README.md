@@ -6,11 +6,6 @@
 > analyst's reason **still holds**, and Python checks every fact the AI relies on. Every alert comes
 > back **CLEAR**, **REVIEW** or **FLAG**, with the reason and the precedent used.
 
-> **ClearScreen is a pseudonym; the product's real name is withheld for confidentiality.**
-> It is an official product **in production with clients**, deployed on **AWS EC2 (Windows Server)
-> behind Cloudflare**. Domains, server addresses, certificates and keys in this repository are
-> placeholders.
-
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-uvicorn-009688?logo=fastapi&logoColor=white)
 ![SQL Server](https://img.shields.io/badge/SQL%20Server-2022-CC2927?logo=microsoftsqlserver&logoColor=white)
@@ -21,6 +16,15 @@
 ![Tests](https://img.shields.io/badge/tests-84%20pytest-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-D97757?logo=anthropic&logoColor=white)
+
+<!-- showcase:banner:start -->
+> 🧭 Part of **Abdul Raqeeb Khatri's portfolio**: [📂 Hub](https://github.com/Ark310/portfolio) · [🌐 Site](https://ark310.github.io) · [💼 Experience](https://github.com/Ark310/experience)
+<!-- showcase:banner:end -->
+
+> **ClearScreen is a pseudonym; the product's real name is withheld for confidentiality.**
+> It is an official product **in production with clients**, deployed on **AWS EC2 (Windows Server)
+> behind Cloudflare**. Domains, server addresses, certificates and keys in this repository are
+> placeholders.
 
 ---
 
@@ -42,6 +46,27 @@ ClearScreen sits beside the client's compliance application:
 
 Each client's data is isolated: an API key belongs to one client and can only read that client's
 records. Alerts are not stored. The client's own system keeps the decision record.
+
+<!-- showcase:why-impact:start -->
+## 💡 Why I Built It
+
+Screening analysts were clearing the same false-positive alerts again and again: the same customer
+against the same listing, already cleared before with a written reason. The proof of concept showed
+that deterministic checks plus a tightly checked AI review could reuse those past decisions safely,
+so I turned it into a product that clients can call, with each client's data kept separate.
+
+## 📈 Impact
+
+- In production with clients on AWS EC2 behind Cloudflare: 9 releases (1.0.0 → 1.5.0) in 9 days,
+  installed with one click on Windows Server.
+- Exact repeats and clear non-matches are decided in well under a second, with no AI. Anything
+  uncertain goes to a human (REVIEW), never to an automatic clear.
+- 84 pytest test functions plus an end-to-end smoke test. The demo rehearsal on 1.3.0 gave 38 of 38
+  expected results for the deterministic groups and the security checks. The POC flow it grew from
+  got 26 of 26 decisions right, with 0 false clears, against 19,992 whitelisted records.
+
+`9 releases in 9 days` · `0 false clears in POC flow test` · `84 tests`
+<!-- showcase:why-impact:end -->
 
 ## Features
 
@@ -300,7 +325,7 @@ Designed and built by Abdul Raqeeb Khatri, with Claude Code and Codex as AI pair
 | Metric | Value |
 |---|---|
 | Releases | 9 (1.0.0 → 1.5.0) in 9 days (2026-11-04 → 2026-11-12) |
-| Commits in this repo | 31: 28 reconstructed from the release packages and demo kit, plus 3 portfolio commits |
+| Commits in this repo | 32: 28 reconstructed from the release packages and demo kit, plus 4 portfolio commits |
 | Code | ~4,250 lines of application code, ~2,300 lines of frozen scoring engine, ~1,150 lines of tests, ~870 lines of installer PowerShell, ~1,300 lines of guides |
 | Tests | 84 pytest test functions + an end-to-end smoke test |
 
@@ -313,3 +338,11 @@ material this repository was built from.
 ## License
 
 [MIT](LICENSE) © 2026 Abdul Raqeeb Khatri
+
+<!-- showcase:footer:start -->
+---
+
+<p align="center"><a href="https://github.com/Ark310/portfolio">← Back to the portfolio hub</a> · <a href="https://ark310.github.io">Interactive site</a> · <a href="https://github.com/Ark310/experience">Experience</a></p>
+
+**Related projects:** [BLNS Sanctions Screening RAG (POC)](https://github.com/Ark310/blns-sanctions-screening-rag) · [BLNS API Bridge](https://github.com/Ark310/blns-api-bridge) · [Local LLM Setup](https://github.com/Ark310/local-llm-setup)
+<!-- showcase:footer:end -->
