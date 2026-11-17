@@ -1,0 +1,21 @@
+{
+  "domain": "api.YOUR_DOMAIN_HERE",
+  "tls_mode": "certificate",
+  "acme_email": "",
+  "api_host": "127.0.0.1",
+  "api_port": 8000,
+  "embed_url": "http://127.0.0.1:11434",
+  "embed_model": "bge-m3",
+  "groq_model": "qwen/qwen3.8-27b",
+  "groq_reasoning_effort": "high",
+  "ai_max_cases": 5,
+  "ai_parallel_calls": 1,
+  "rate_limit_per_minute": 120,
+  "max_request_mb": 100,
+  "max_match_batch": 500,
+  "max_add_batch": 50000,
+  "enable_docs": true,
+  "test_endpoint_enabled": false,
+  "embedding_paused": false,
+  "embed_worker_seconds": 30
+}

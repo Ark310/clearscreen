@@ -1,5 +1,22 @@
 # ClearScreen demo — Client A (ClientID 001)
 
+> **Public repository note.** The demo's datasets are **not published**: the two 10,000-record
+> whitelist sets (`whitelist\`, `whitelist_900000\`, `id_map.csv`) and the 59 demo alerts
+> (`cases\demo_cases.json`). This folder holds the scripts and this guide, plus two things that run
+> on their own:
+>
+> - [`quick_tests/`](quick_tests/): made-up `TEST-` people for Swagger (add 4 records, then 6 alerts
+>   that take the exact-repeat, score-gate, no-listing-details and AI paths).
+> - [`cases/demo_cases.example.json`](cases/demo_cases.example.json): those same alerts in the
+>   `demo_cases.json` format, so the scorecard runs without the private data:
+>   `.\Run-Demo.ps1 -CasesFile .\cases\demo_cases.example.json` (after loading `quick_tests\1_single_add.json`
+>   and `2_batch_add.json`).
+>
+> Each whitelist record has these fields: `ClientID`, `Unique_ID`, `Screened_Fields`,
+> `Screened_Values`, `Database_Screened`, `Screened_Date`, `Matched_Details` (the listing text) and
+> `Analyst_Allow_Reasoning`. `Load-Whitelist.ps1 -Folder <dir>` loads any `client001_whitelist_part*.json`
+> files you supply. The API domain below is a placeholder.
+
 **Made-up data.** 10,000 whitelist records from Client A's test dataset (`Whitelist.xlsx`, ClientID 1),
 relabelled as ClientID **001**, plus demo alerts that show every way ClearScreen can decide.
 

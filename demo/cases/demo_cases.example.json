@@ -1,0 +1,133 @@
+{
+ "client": "001",
+ "about": "Example demo cases built from the made-up TEST- records in quick_tests (load 1_single_add.json and 2_batch_add.json first). Same shape as the full demo_cases.json, which is not published.",
+ "groups": [
+  {
+   "category": "exact_repeat",
+   "title": "1. Exact repeats -> CLEAR (no AI)",
+   "what": "Same customer, list hit and listing as a whitelisted record."
+  },
+  {
+   "category": "no_listing_details",
+   "title": "2. No listing details -> REVIEW (no AI)",
+   "what": "Nothing to compare, so a human reviews."
+  },
+  {
+   "category": "score_below_threshold",
+   "title": "3. Clearly not the listed person -> CLEAR (no AI)",
+   "what": "Customer scores below 0.80 against the listing."
+  },
+  {
+   "category": "ai_same_case_new_address",
+   "title": "6. Whitelisted case, address written differently -> AI should CLEAR",
+   "what": "Not an exact repeat, so the AI checks whether the earlier reason still holds."
+  }
+ ],
+ "cases": [
+  {
+   "id": "TEST-ALERT-PY-01",
+   "category": "exact_repeat",
+   "why": "unchanged repeat of TEST-WL-0002",
+   "expect": {
+    "disposition": "CLEAR",
+    "rule": "exact_repeat_whitelisted"
+   },
+   "alert": {
+    "ClientID": "001",
+    "Unique_ID": "TEST-ALERT-PY-01",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "YSOLDE BRANNIGAN-FERREIRA,412 CEDARVALE AVE,CANADA,TORONTO,M6C 3A1,ONTARIO",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 9:00:00 AM",
+    "Matched_Details": "Entity Name: Ysolde Brannigan-Ferreira Reference No.:99000102 Notes:2023 sanctions designation. Address Information ---------- Street 1: Avenida Litoral 220 City: Mindelo Country: Cabo Verde Additional Information ---------- DOB: 1947-01-15 ---------- Nationality: Cabo Verde"
+   }
+  },
+  {
+   "id": "TEST-ALERT-PY-02",
+   "category": "exact_repeat",
+   "why": "unchanged repeat of TEST-WL-0003",
+   "expect": {
+    "disposition": "CLEAR",
+    "rule": "exact_repeat_whitelisted"
+   },
+   "alert": {
+    "ClientID": "001",
+    "Unique_ID": "TEST-ALERT-PY-02",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "CASIMIR ODUYA LINDQVIST,9 BIRCHGROVE LANE,CANADA,CALGARY,T2N 1N4,ALBERTA",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 9:00:00 AM",
+    "Matched_Details": "Entity Name: Casimir Oduya Lindqvist Reference No.:99000103 Notes:2022 customs evasion report. Address Information ---------- Street 1: Plot 9 Kisiwa Road City: Mombasa Country: Kenya Additional Information ---------- DOB: 1960-09-30 ---------- Nationality: Kenya"
+   }
+  },
+  {
+   "id": "TEST-ALERT-PY-03",
+   "category": "exact_repeat",
+   "why": "unchanged repeat of TEST-WL-0004",
+   "expect": {
+    "disposition": "CLEAR",
+    "rule": "exact_repeat_whitelisted"
+   },
+   "alert": {
+    "ClientID": "001",
+    "Unique_ID": "TEST-ALERT-PY-03",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "PERPETUA ARNWALD SOKOLOVA,1550 RUE SAINT-DENIS,CANADA,MONTREAL,H2X 3K2,QUEBEC",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 9:00:00 AM",
+    "Matched_Details": "Entity Name: Perpetua Arnwald Sokolova Reference No.:99000104 Notes:PEP: customs official 2015-2021. Address Information ---------- Street 1: ul. Portowa 3 City: Gdynia Country: Poland Additional Information ---------- DOB: 1958-12-11 ---------- Nationality: Poland"
+   }
+  },
+  {
+   "id": "TEST-ALERT-PY-05",
+   "category": "no_listing_details",
+   "why": "the listing says 'Entity Details NOT AVAILABLE'",
+   "expect": {
+    "disposition": "REVIEW",
+    "rule": "no_listing_details"
+   },
+   "alert": {
+    "ClientID": "001",
+    "Unique_ID": "TEST-ALERT-PY-05",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "ODALYS FENWICK-ARAUJO,5 WILLOW CT,CANADA,REGINA,S4P 3Y2,SASKATCHEWAN",
+    "Database_Screened": "OSFI COUNTRY.CDF",
+    "Screened_Date": "11/12/2026 3:36:00 PM",
+    "Matched_Details": "Entity Details NOT AVAILABLE"
+   }
+  },
+  {
+   "id": "TEST-ALERT-PY-04",
+   "category": "score_below_threshold",
+   "why": "different person, match score 0.48",
+   "expect": {
+    "disposition": "CLEAR",
+    "rule": "score_below_threshold"
+   },
+   "alert": {
+    "ClientID": "001",
+    "Unique_ID": "TEST-ALERT-PY-04",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "BARTLEY VANCE-OYELARAN,73 HARBOURVIEW DR,CANADA,VICTORIA,V8V 1A1,BRITISH COLUMBIA",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 3:35:00 PM",
+    "Matched_Details": "Entity Name: Bartholomew Vane Reference No.:99000105 Notes:2021 counterfeit goods conviction. Address Information ---------- Street 1: 22 Quay Lane City: Hull Country: United Kingdom Additional Information ---------- DOB: 1970-03-03 ---------- Nationality: United Kingdom"
+   }
+  },
+  {
+   "id": "TEST-ALERT-AI-01",
+   "category": "ai_same_case_new_address",
+   "why": "TEST-WL-0001 with 'UNIT 4' added to the address: one AI question, CLEAR expected",
+   "expect": {},
+   "alert": {
+    "ClientID": "001",
+    "Unique_ID": "TEST-ALERT-AI-01",
+    "Screened_Fields": "Name,Street Address,Country,City,Post Code,Province",
+    "Screened_Values": "THADDEUS QUILLFEATHER-MOREAU,88 MAPLEHURST CRESCENT UNIT 4,CANADA,HALIFAX,B3H 2Y4,PORT AURORA",
+    "Database_Screened": "WorldCompliance Data Plus.BDF2",
+    "Screened_Date": "11/12/2026 3:30:00 PM",
+    "Matched_Details": "Entity Name: Thaddeus Quillfeather-Moreau Reference No.:99000101 Notes:Named in a 2024 procurement fraud inquiry. Address Information ---------- Street 1: 14 Rue des Tanneurs City: Port-Gentil Additional Information ---------- DOB: 1951-06-02 ---------- Nationality: Gabon"
+   }
+  }
+ ]
+}

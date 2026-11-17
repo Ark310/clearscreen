@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv*/
+venv/
+.pytest_cache/
+build/
+dist/
+
+# Release packages and bundled binaries
+*.zip
+*.exe
+installer/vendor/*
+!installer/vendor/README.md
+docs/pdf/
+
+# Runtime data, secrets and certificates (live under <drive>\ClearScreen\Data on a server)
+Data/
+Backups/
+SQLData/
+config/settings.json
+secure.dat
+*.dpapi
+*.pem
+*.key
+*.crt
+*.cer
+*.pfx
+*.p12
+.env
+*.env
+
+# Logs and demo output
+*.log
+logs/
+demo/results/
+
+# Demo datasets (not published)
+demo/whitelist/
+demo/whitelist_900000/
+demo/cases/demo_cases.json
+*.xlsx
+*.csv
+
+# OS / editor
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+.claude/
