@@ -344,5 +344,5 @@ material this repository was built from.
 
 <p align="center"><a href="https://github.com/Ark310/portfolio">← Back to the portfolio hub</a> · <a href="https://ark310.github.io">Interactive site</a> · <a href="https://github.com/Ark310/experience">Experience</a></p>
 
-**Related projects:** [BLNS Sanctions Screening RAG (POC)](https://github.com/Ark310/blns-sanctions-screening-rag) · [BLNS API Bridge](https://github.com/Ark310/blns-api-bridge) · [Local LLM Setup](https://github.com/Ark310/local-llm-setup)
+**Related projects:** [BLNS: Sanctions Screening R&D](https://github.com/Ark310/blns-sanctions-screening-rag) · [BLNS API Bridge](https://github.com/Ark310/blns-api-bridge) · [Local LLM Setup](https://github.com/Ark310/local-llm-setup)
 <!-- showcase:footer:end -->
