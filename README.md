@@ -6,6 +6,9 @@
 > analyst's reason **still holds**, and Python checks every fact the AI relies on. Every alert comes
 > back **CLEAR**, **REVIEW** or **FLAG**, with the reason and the precedent used.
 
+> **The production-ready version of my BLNS sanctions-screening RAG R&D →
+> [blns-sanctions-screening-rag](https://github.com/Ark310/blns-sanctions-screening-rag)** ([how the POC became this product](#from-poc-to-product))
+
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-uvicorn-009688?logo=fastapi&logoColor=white)
 ![SQL Server](https://img.shields.io/badge/SQL%20Server-2022-CC2927?logo=microsoftsqlserver&logoColor=white)
@@ -50,20 +53,13 @@ records. Alerts are not stored. The client's own system keeps the decision recor
 <!-- showcase:why-impact:start -->
 ## 💡 Why I Built It
 
-Screening analysts were clearing the same false-positive alerts again and again: the same customer
-against the same listing, already cleared before with a written reason. The proof of concept showed
-that deterministic checks plus a tightly checked AI review could reuse those past decisions safely,
-so I turned it into a product that clients can call, with each client's data kept separate.
+Screening analysts were clearing the same false-positive alerts again and again: the same customer against the same listing, already cleared before with a written reason. My BLNS RAG R&D showed that deterministic checks plus a tightly checked AI review could reuse those past decisions safely, so I turned it into a product that clients can call, with each client's data kept separate.
 
 ## 📈 Impact
 
-- In production with clients on AWS EC2 behind Cloudflare: 9 releases (1.0.0 → 1.5.0) in 9 days,
-  installed with one click on Windows Server.
-- Exact repeats and clear non-matches are decided in well under a second, with no AI. Anything
-  uncertain goes to a human (REVIEW), never to an automatic clear.
-- 84 pytest test functions plus an end-to-end smoke test. The demo rehearsal on 1.3.0 gave 38 of 38
-  expected results for the deterministic groups and the security checks. The POC flow it grew from
-  got 26 of 26 decisions right, with 0 false clears, against 19,992 whitelisted records.
+- In production with clients on AWS EC2 behind Cloudflare: 9 releases (1.0.0 → 1.5.0) in 9 days, installed with one click on Windows Server.
+- Exact repeats and clear non-matches are decided in well under a second, with no AI. Anything uncertain goes to a human (REVIEW), never to an automatic clear.
+- 84 pytest test functions plus an end-to-end smoke test. The demo rehearsal on 1.3.0 gave 38 of 38 expected results for the deterministic groups and the security checks. The POC flow it grew from got 26 of 26 decisions right, with 0 false clears, against 19,992 whitelisted records.
 
 `9 releases in 9 days` · `0 false clears in POC flow test` · `84 tests`
 <!-- showcase:why-impact:end -->
