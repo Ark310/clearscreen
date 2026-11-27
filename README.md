@@ -7,7 +7,7 @@
 > back **CLEAR**, **REVIEW** or **FLAG**, with the reason and the precedent used.
 
 > **The production-ready version of my BLNS sanctions-screening RAG R&D →
-> [blns-sanctions-screening-rag](https://github.com/Ark310/blns-sanctions-screening-rag)** ([how the POC became this product](#from-poc-to-product))
+> [blns-sanctions-screening-rag](https://github.com/Ark310/blns-sanctions-screening-rag)** ([how the R&D became this product](#from-rd-to-product))
 
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-uvicorn-009688?logo=fastapi&logoColor=white)
@@ -59,9 +59,9 @@ Screening analysts were clearing the same false-positive alerts again and again:
 
 - In production with clients on AWS EC2 behind Cloudflare: 9 releases (1.0.0 → 1.5.0) in 9 days, installed with one click on Windows Server.
 - Exact repeats and clear non-matches are decided in well under a second, with no AI. Anything uncertain goes to a human (REVIEW), never to an automatic clear.
-- 84 pytest test functions plus an end-to-end smoke test. The demo rehearsal on 1.3.0 gave 38 of 38 expected results for the deterministic groups and the security checks. The POC flow it grew from got 26 of 26 decisions right, with 0 false clears, against 19,992 whitelisted records.
+- 84 pytest test functions plus an end-to-end smoke test. The demo rehearsal on 1.3.0 gave 38 of 38 expected results for the deterministic groups and the security checks. The R&D flow it grew from got 26 of 26 decisions right, with 0 false clears, against 19,992 whitelisted records.
 
-`9 releases in 9 days` · `0 false clears in POC flow test` · `84 tests`
+`9 releases in 9 days` · `0 false clears in R&D flow test` · `84 tests`
 <!-- showcase:why-impact:end -->
 
 ## Features
@@ -71,7 +71,7 @@ Screening analysts were clearing the same false-positive alerts again and again:
   second, with no AI.
 - **Validated, frozen scoring engine.** OFAC-style per-token Jaro-Winkler name matching, points for
   country, high-risk country, state, city, DOB and ID, and a LexisNexis listing parser. It is copied
-  verbatim from the POC, where it was validated. Any change requires full re-validation.
+  verbatim from the BLNS R&D, where it was validated. Any change requires full re-validation.
 - **Similar-case search.** The listing is cut into chunks and embedded with bge-m3. Each chunk is
   stored once, keyed by SHA-1. The similarity is computed in both directions, with penalties when
   the name, DOB or country differs. If the entity types differ, the record is rejected.
@@ -102,7 +102,7 @@ Screening analysts were clearing the same false-positive alerts again and again:
 | Layer | Technology |
 |---|---|
 | API | Python 3.13, FastAPI, uvicorn, pydantic |
-| Matching | rapidfuzz (Jaro-Winkler), numpy, frozen POC scoring engine + LexisNexis listing parser |
+| Matching | rapidfuzz (Jaro-Winkler), numpy, frozen R&D scoring engine + LexisNexis listing parser |
 | Embeddings | bge-m3 on Ollama, CPU only, `127.0.0.1:11434` |
 | LLM | Configurable hosted LLM provider (Groq `qwen/qwen3.8-27b`, as tested), reasoning effort high, temperature 0, strict JSON schema |
 | Database | SQL Server 2022 via pyodbc + ODBC Driver 18 (`WL_Records`, `WL_Chunk_Vectors`, `WL_Payload_Chunks`) |
@@ -272,12 +272,12 @@ Placeholders: `api.clearscreen.example` / `api.YOUR_DOMAIN_HERE` (API domain), `
   checks, plus Swagger quick tests with made-up `TEST-` people. The demo was rehearsed on 1.3.0:
   groups 1 to 4 and the security checks came out 38 of 38 as expected.
 
-## From POC to product
+## From R&D to product
 
 ClearScreen grew out of **[blns-sanctions-screening-rag](https://github.com/Ark310/blns-sanctions-screening-rag)**,
-a proof of concept that ran entirely offline on one workstation (July to October 2026).
+the R&D (a proof of concept) that ran entirely offline on one workstation (July to October 2026).
 
-| | POC (blns-sanctions-screening-rag) | Product (ClearScreen) |
+| | R&D (blns-sanctions-screening-rag) | Product (ClearScreen) |
 |---|---|---|
 | Goal | Can an LLM help adjudicate screening alerts? | A service clients call in production |
 | Data model | LexisNexis export columns, one team's history | Each client's own whitelist (`ClientID`, `Unique_ID`, analyst reasoning), isolated per key |
@@ -287,9 +287,9 @@ a proof of concept that ran entirely offline on one workstation (July to October
 | Hosting | Local GPU workstation, .NET reverse proxy on IIS | AWS EC2 Windows Server, Caddy + Cloudflare, WinSW services, one-click installer |
 | Kept unchanged | | The scoring engine and LexisNexis parser, copied verbatim and frozen |
 
-The main lessons from the POC: do the decisive work in deterministic Python, use the team's own
+The main lessons from the R&D: do the decisive work in deterministic Python, use the team's own
 past decisions as the evidence, and narrow the LLM's job until every fact it uses can be checked.
-In the POC, the 26-alert end-to-end test against 19,992 whitelisted records gave 26 of 26 correct
+In the R&D, the 26-alert end-to-end test against 19,992 whitelisted records gave 26 of 26 correct
 decisions with 0 false clears.
 
 ## Release history
